@@ -1,0 +1,26 @@
+services:
+  flux-klein:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dgx_spark
+    image: hks/flux2-klein-4b:dgx-spark
+    container_name: flux2-klein-4b
+    gpus: all
+    ipc: host
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - "${FLUX_MODEL_CACHE:-../.model_cache}:/models/huggingface"
+      - "../config/server.yaml:/app/config/server.yaml:ro"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: /models/huggingface
+      FLUX_EDITOR_SERVER_CONFIG: /app/config/server.yaml
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 10m

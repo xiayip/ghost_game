@@ -6,6 +6,10 @@ nearest_face:
     image_topic: /camera/color/image_raw/compressed
     input_compressed: true
     detection_topic: /nearest_face/detection
+    # The same expanded box is also published as a bgr8 crop. FLUX caches the
+    # latest crop and consumes it only after the orchestrator submits a prompt.
+    head_crop_topic: /nearest_face/head_crop
+    publish_head_crop: true
     debug_image_topic: /nearest_face/debug_image
     debug_compressed_topic: /nearest_face/debug_image/compressed
     model_path: ''

@@ -15,6 +15,12 @@ def generate_launch_description():
     face_detection_config = LaunchConfiguration("face_detection_config")
     face_detection_model_path = LaunchConfiguration(
         "face_detection_model_path")
+    enable_face_reconstruction = LaunchConfiguration(
+        "enable_face_reconstruction")
+    face_reconstruction_config = LaunchConfiguration(
+        "face_reconstruction_config")
+    face_reconstruction_server_url = LaunchConfiguration(
+        "face_reconstruction_server_url")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
     enable_tts = LaunchConfiguration("enable_tts")
     tts_config = LaunchConfiguration("tts_config")
@@ -63,6 +69,29 @@ def generate_launch_description():
                 description="Start the optional web dashboard on port 8765",
             ),
             DeclareLaunchArgument(
+                "enable_face_reconstruction",
+                default_value="true",
+                description=(
+                    "Start FLUX full-head preprocessing after stable face capture"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "face_reconstruction_config",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("flux_image_editor"),
+                        "config",
+                        "ghost_game.yaml",
+                    ]
+                ),
+                description="Ghost-specific FLUX bridge parameter file",
+            ),
+            DeclareLaunchArgument(
+                "face_reconstruction_server_url",
+                default_value="http://127.0.0.1:8090",
+                description="FLUX HTTP endpoint (local or SSH-forwarded)",
+            ),
+            DeclareLaunchArgument(
                 "enable_tts",
                 default_value="true",
                 description="Start offline Piper TTS and enable game announcements",
@@ -102,7 +131,10 @@ def generate_launch_description():
                     {
                         "tts_enabled": ParameterValue(
                             enable_tts, value_type=bool
-                        )
+                        ),
+                        "enable_face_reconstruction": ParameterValue(
+                            enable_face_reconstruction, value_type=bool
+                        ),
                     },
                 ],
             ),
@@ -133,6 +165,21 @@ def generate_launch_description():
                     {"model_path": face_detection_model_path},
                 ],
                 condition=IfCondition(enable_face_detection),
+            ),
+            Node(
+                package="flux_image_editor",
+                executable="flux_image_editor_node",
+                name="flux_image_editor",
+                output="screen",
+                parameters=[
+                    face_reconstruction_config,
+                    {
+                        "server_url": ParameterValue(
+                            face_reconstruction_server_url, value_type=str
+                        ),
+                    },
+                ],
+                condition=IfCondition(enable_face_reconstruction),
             ),
             Node(
                 package="ghost_game_orchestrator",

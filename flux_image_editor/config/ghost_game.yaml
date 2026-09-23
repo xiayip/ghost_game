@@ -1,0 +1,25 @@
+flux_image_editor:
+  ros__parameters:
+    # The detector publishes only the selected expanded full-head bbox here.
+    image_topic: /nearest_face/head_crop
+    # The orchestrator emits one prompt after stable acquisition and centering.
+    prompt_topic: /ghost/reconstruction/prompt
+    output_image_topic: /ghost/reconstruction/image
+    output_png_topic: /ghost/reconstruction/image_png
+    status_topic: /ghost/reconstruction/status
+    submit_service: /ghost/reconstruction/submit
+
+    # Run the FLUX service locally or forward this port from the GPU machine.
+    server_url: http://127.0.0.1:8090
+    request_timeout_sec: 300.0
+    auto_submit_on_prompt: true
+
+    # Keep one archived capture per round and refresh latest_head_crop.png.
+    # This happens before HTTP inference, so capture works while FLUX is down.
+    # Workspace-mounted path survives container recreation.
+    input_directory: /workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures
+    save_input: true
+    output_directory: ~/ghost_reconstruction_outputs
+    save_output: true
+    max_input_bytes: 20000000
+    log_timing: true

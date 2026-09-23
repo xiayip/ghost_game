@@ -204,6 +204,19 @@ ghost_game_node:
     face_gesture_min_motion_time: 0.32 # s minimum tilt keyframe duration
     face_gesture_trajectory_rate_hz: 40.0 # dense points in one JTC goal
 
+    # Stable capture triggers one asynchronous FLUX edit using the detector's
+    # latest /nearest_face/head_crop. The result remains available as both a
+    # ROS Image and PNG for the future img2mesh/Tripo stage; an unavailable
+    # FLUX backend reports an error but never stops the robot sequence.
+    enable_face_reconstruction: true
+    face_reconstruction_prompt_topic: /ghost/reconstruction/prompt
+    face_reconstruction_status_topic: /ghost/reconstruction/status
+    face_reconstruction_prompt: >-
+      Create a clean reconstruction-ready cyberpunk operative portrait from
+      this full-head crop. Preserve identity, facial geometry, head pose, hair
+      silhouette, ears, and neck. Remove occlusions and use even neutral
+      lighting on a plain dark background.
+
     autostart: false
     # TEST SETTINGS - flip these back before the real show:
     #   enable_dance:false skips only the optional dance; the impedance-JTC

@@ -1,0 +1,20 @@
+# ROS 2 bridge settings. Edit this file and restart the node.
+flux_image_editor:
+  ros__parameters:
+    image_topic: /sensor_msgs/image_raw
+    prompt_topic: /flux_image_editor/prompt
+    output_image_topic: /flux_image_editor/image_raw
+    output_png_topic: /flux_image_editor/image_png
+    status_topic: /flux_image_editor/status
+    submit_service: /flux_image_editor/submit
+
+    server_url: http://127.0.0.1:8090
+    request_timeout_sec: 300.0
+    auto_submit_on_prompt: true
+
+    input_directory: ~/flux_inputs
+    save_input: true
+    output_directory: ~/flux_outputs
+    save_output: true
+    max_input_bytes: 20000000
+    log_timing: true

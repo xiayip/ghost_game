@@ -1,0 +1,17 @@
+# FLUX.2 [klein] 4B inference settings used inside the DGX Spark container.
+server:
+  bind_host: 0.0.0.0
+  port: 8090
+  model_id: black-forest-labs/FLUX.2-klein-4B
+  device: cuda
+  dtype: bfloat16
+  inference_steps: 4
+  guidance_scale: 1.0
+  seed: -1  # -1 selects a random seed for each request.
+  max_long_edge: 1024
+  max_megapixels: 1.1
+  dimension_multiple: 16
+  max_input_bytes: 20000000
+  max_prompt_chars: 2000
+  enable_cpu_offload: false
+

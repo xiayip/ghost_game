@@ -24,6 +24,8 @@ class NearestFaceNode(Node):
             'image_topic', '/camera/color/image_raw/compressed')
         self.declare_parameter('input_compressed', True)
         self.declare_parameter('detection_topic', '/nearest_face/detection')
+        self.declare_parameter('head_crop_topic', '/nearest_face/head_crop')
+        self.declare_parameter('publish_head_crop', True)
         self.declare_parameter('debug_image_topic', '/nearest_face/debug_image')
         self.declare_parameter(
             'debug_compressed_topic', '/nearest_face/debug_image/compressed')
@@ -47,6 +49,9 @@ class NearestFaceNode(Node):
         self.input_compressed = bool(
             self.get_parameter('input_compressed').value)
         self.detection_topic = self.get_parameter('detection_topic').value
+        self.head_crop_topic = self.get_parameter('head_crop_topic').value
+        self.publish_head_crop = bool(
+            self.get_parameter('publish_head_crop').value)
         self.debug_image_topic = self.get_parameter('debug_image_topic').value
         self.debug_compressed_topic = self.get_parameter(
             'debug_compressed_topic').value
@@ -109,6 +114,10 @@ class NearestFaceNode(Node):
 
         self.detection_publisher = self.create_publisher(
             Detection2DArray, self.detection_topic, 10)
+        self.head_crop_publisher = None
+        if self.publish_head_crop:
+            self.head_crop_publisher = self.create_publisher(
+                Image, self.head_crop_topic, qos_profile_sensor_data)
         self.debug_publisher = None
         self.debug_compressed_publisher = None
         if self.publish_debug_image:
@@ -136,6 +145,26 @@ class NearestFaceNode(Node):
             f'right={self.bbox_expansion[1]:.2f}, '
             f'top={self.bbox_expansion[2]:.2f}, '
             f'bottom={self.bbox_expansion[3]:.2f})')
+
+        if self.head_crop_publisher is not None:
+            self.get_logger().info(
+                f'Expanded full-head crops publish on {self.head_crop_topic}')
+
+    @staticmethod
+    def _bgr_to_image(pixels, header):
+        """Build a bgr8 Image without cv_bridge (NumPy 2 ABI safe)."""
+        pixels = np.ascontiguousarray(pixels, dtype=np.uint8)
+        if pixels.ndim != 3 or pixels.shape[2] != 3 or pixels.size == 0:
+            raise ValueError('head crop must be a non-empty BGR image')
+        output = Image()
+        output.header = header
+        output.height = pixels.shape[0]
+        output.width = pixels.shape[1]
+        output.encoding = 'bgr8'
+        output.is_bigendian = 0
+        output.step = pixels.shape[1] * 3
+        output.data = pixels.tobytes()
+        return output
 
     @staticmethod
     def _image_to_bgr(message):
@@ -242,6 +271,14 @@ class NearestFaceNode(Node):
             detection.results.append(hypothesis)
             output.detections.append(detection)
         self.detection_publisher.publish(output)
+
+        if selected is not None and self.head_crop_publisher is not None:
+            crop = bgr[
+                selected.y:selected.y + selected.height,
+                selected.x:selected.x + selected.width,
+            ]
+            self.head_crop_publisher.publish(
+                self._bgr_to_image(crop, message.header))
 
         if self.debug_publisher is not None:
             canvas = bgr.copy()

@@ -10,6 +10,7 @@ as the nearest-person proxy. RGB alone cannot provide metric distance.
 
 - Input: `/camera/color/image_raw/compressed` (`sensor_msgs/msg/CompressedImage`)
 - Output: `/nearest_face/detection` (`vision_msgs/msg/Detection2DArray`)
+- Full-head crop: `/nearest_face/head_crop` (`sensor_msgs/msg/Image`, `bgr8`)
 - Debug image: `/nearest_face/debug_image` (`sensor_msgs/msg/Image`)
 - Web/debug JPEG: `/nearest_face/debug_image/compressed`
   (`sensor_msgs/msg/CompressedImage`)
@@ -20,6 +21,8 @@ image header, and a pixel-space `BoundingBox2D`. The published box is expanded
 from YuNet's facial region to include the full head for downstream cropping.
 By default it adds 35% of face width on both sides, 55% of face height above,
 and 30% below, then clips the result to the source-image boundary.
+The crop topic publishes exactly those clipped pixels and is the input to the
+Ghost Game's asynchronous FLUX preprocessing stage.
 
 `vision_msgs` is an official ROS perception interface, so this package does
 not define or generate a custom message.

@@ -1,0 +1,25 @@
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+ARG DIFFUSERS_COMMIT=8b3c707ebd3ec4881f4190cf42931da07eaf3b65
+
+WORKDIR /app
+
+# Keep the NGC-optimized PyTorch already included in this image. Diffusers is
+# pinned because FLUX.2 Klein support is newer than many distro releases.
+RUN python -m pip install --no-cache-dir \
+    "git+https://github.com/huggingface/diffusers.git@${DIFFUSERS_COMMIT}" \
+    transformers accelerate safetensors sentencepiece protobuf \
+    fastapi "uvicorn[standard]" python-multipart pyyaml pillow huggingface-hub
+
+COPY flux_image_editor /app/flux_image_editor
+COPY config /app/config
+
+ENV PYTHONPATH=/app \
+    FLUX_EDITOR_SERVER_CONFIG=/app/config/server.yaml \
+    HF_HOME=/models/huggingface \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+EXPOSE 8090
+
+CMD ["python", "-m", "flux_image_editor.inference_server"]
+

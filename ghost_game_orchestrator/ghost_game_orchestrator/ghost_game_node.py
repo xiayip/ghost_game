@@ -18,6 +18,8 @@ Flow:
      full-head bbox to image center through direct MIT impedance references.
   6. After capture, orbit-scan the face and perform a smooth tilt-and-nod
      gesture from the captured pose while retaining direct impedance control.
+     In parallel, submit the detector's latest expanded full-head crop to the
+     FLUX preprocessing service for the later image-to-3D stage.
   7. Optionally switch to the position-control chain and play a short
      trajectory ("dance").
 
@@ -41,7 +43,12 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
@@ -272,6 +279,11 @@ class GhostGameNode(Node):
         self._camera_size = None
         self._latest_face = None
         self._face_stable_for = 0.0
+        self._reconstruction_lock = threading.Lock()
+        self._reconstruction_waiting_for_request = False
+        self._reconstruction_request_id = ''
+        self._reconstruction_state = self._new_reconstruction_state()
+        self._reconstruction_state['enabled'] = self.enable_face_reconstruction
 
         # -- Callback groups: keep service/action calls off the subscriber/timer group --
         self._io_cb_group = ReentrantCallbackGroup()
@@ -290,6 +302,20 @@ class GhostGameNode(Node):
         self._gripper_pub = self.create_publisher(JointState, self.gripper_command_topic, 10)
         self._state_pub = self.create_publisher(String, '~/state', 10)
         self._tts_pub = self.create_publisher(String, self.tts_text_topic, 10)
+        self._reconstruction_prompt_pub = None
+        self._reconstruction_status_sub = None
+        if self.enable_face_reconstruction:
+            reconstruction_qos = QoSProfile(
+                depth=10,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
+            self._reconstruction_prompt_pub = self.create_publisher(
+                String, self.face_reconstruction_prompt_topic, 10)
+            self._reconstruction_status_sub = self.create_subscription(
+                String, self.face_reconstruction_status_topic,
+                self._face_reconstruction_status_cb, reconstruction_qos,
+                callback_group=self._io_cb_group)
         self._state_timer = self.create_timer(0.2, self._publish_state, callback_group=self._io_cb_group)
 
         # -- Clients --
@@ -326,6 +352,11 @@ class GhostGameNode(Node):
         self.get_logger().info(
             f'GhostGameNode ready: {n} joints, tolerance={self.match_tolerance} rad, '
             f'dwell={self.match_dwell_time} s')
+        if self.enable_face_reconstruction:
+            self.get_logger().info(
+                'Face reconstruction enabled: prompt='
+                f'{self.face_reconstruction_prompt_topic}, status='
+                f'{self.face_reconstruction_status_topic}')
 
         if self.autostart:
             threading.Thread(target=self._start_round, daemon=True).start()
@@ -511,6 +542,19 @@ class GhostGameNode(Node):
         self.declare_parameter('face_gesture_nod_min_motion_time', 0.18)
         self.declare_parameter('face_gesture_min_motion_time', 0.32)
         self.declare_parameter('face_gesture_trajectory_rate_hz', 40.0)
+        self.declare_parameter('enable_face_reconstruction', True)
+        self.declare_parameter(
+            'face_reconstruction_prompt_topic',
+            '/ghost/reconstruction/prompt')
+        self.declare_parameter(
+            'face_reconstruction_status_topic',
+            '/ghost/reconstruction/status')
+        self.declare_parameter(
+            'face_reconstruction_prompt',
+            'Create a clean reconstruction-ready cyberpunk operative portrait '
+            'from this full-head crop. Preserve identity, facial geometry, '
+            'head pose, hair silhouette, ears, and neck. Remove occlusions and '
+            'use even neutral lighting on a plain dark background.')
         self.declare_parameter('autostart', False)
         self.declare_parameter('enable_dance', True)
         self.declare_parameter('publish_debug_distances', True)
@@ -688,6 +732,20 @@ class GhostGameNode(Node):
             p('face_gesture_min_motion_time').value)
         self.face_gesture_trajectory_rate_hz = float(
             p('face_gesture_trajectory_rate_hz').value)
+        self.enable_face_reconstruction = bool(
+            p('enable_face_reconstruction').value)
+        self.face_reconstruction_prompt_topic = str(
+            p('face_reconstruction_prompt_topic').value)
+        self.face_reconstruction_status_topic = str(
+            p('face_reconstruction_status_topic').value)
+        self.face_reconstruction_prompt = str(
+            p('face_reconstruction_prompt').value)
+        if self.enable_face_reconstruction and not all((
+                self.face_reconstruction_prompt_topic.strip(),
+                self.face_reconstruction_status_topic.strip(),
+                self.face_reconstruction_prompt.strip())):
+            raise RuntimeError(
+                'face reconstruction topics and prompt must be non-empty')
         self.autostart = bool(p('autostart').value)
         self.enable_dance = bool(p('enable_dance').value)
         self.publish_debug_distances = bool(p('publish_debug_distances').value)
@@ -755,6 +813,90 @@ class GhostGameNode(Node):
             sample = None
         with self._face_lock:
             self._latest_face = sample
+
+    @staticmethod
+    def _new_reconstruction_state():
+        return {
+            'enabled': False,
+            'status': 'idle',
+            'request_id': '',
+            'input_path': '',
+            'latest_input_path': '',
+            'output_path': '',
+            'width': 0,
+            'height': 0,
+            'total_sec': 0.0,
+            'error': '',
+        }
+
+    def _reset_reconstruction_state(self):
+        with self._reconstruction_lock:
+            self._reconstruction_waiting_for_request = False
+            self._reconstruction_request_id = ''
+            self._reconstruction_state = self._new_reconstruction_state()
+            self._reconstruction_state['enabled'] = (
+                self.enable_face_reconstruction)
+
+    def _face_reconstruction_status_cb(self, message):
+        """Mirror only the current round's asynchronous FLUX request."""
+        try:
+            update = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            self.get_logger().warn(
+                'Ignoring malformed face reconstruction status JSON',
+                throttle_duration_sec=2.0)
+            return
+        if not isinstance(update, dict):
+            return
+        status = str(update.get('status', ''))
+        request_id = str(update.get('request_id', ''))
+        if not status or not request_id:
+            return
+        try:
+            width = int(update.get('width', 0) or 0)
+            height = int(update.get('height', 0) or 0)
+            total_sec = float(update.get('total_sec', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return
+        with self._reconstruction_lock:
+            if self._reconstruction_waiting_for_request:
+                if status != 'accepted':
+                    return
+                self._reconstruction_waiting_for_request = False
+                self._reconstruction_request_id = request_id
+            elif (not self._reconstruction_request_id or
+                  request_id != self._reconstruction_request_id):
+                return
+            self._reconstruction_state = {
+                'enabled': True,
+                'status': status,
+                'request_id': request_id,
+                'input_path': str(update.get('input_path', '')),
+                'latest_input_path': str(
+                    update.get('latest_input_path', '')),
+                'output_path': str(update.get('output_path', '')),
+                'width': width,
+                'height': height,
+                'total_sec': total_sec,
+                'error': str(update.get('error', '')),
+            }
+
+    def _submit_face_reconstruction(self):
+        """Trigger FLUX once; the worker and any later 3D stage stay async."""
+        if self._reconstruction_prompt_pub is None:
+            return
+        with self._reconstruction_lock:
+            self._reconstruction_waiting_for_request = True
+            self._reconstruction_request_id = ''
+            self._reconstruction_state = self._new_reconstruction_state()
+            self._reconstruction_state.update({
+                'enabled': True,
+                'status': 'submitted',
+            })
+        self._reconstruction_prompt_pub.publish(String(
+            data=self.face_reconstruction_prompt.strip()))
+        self.get_logger().info(
+            'Submitted latest stable full-head crop for FLUX preprocessing')
 
     def _positions_snapshot(self):
         with self._joint_positions_lock:
@@ -845,6 +987,8 @@ class GhostGameNode(Node):
                 'score': None if face is None else face.score,
                 'stable_for': stable_for,
             }
+        with self._reconstruction_lock:
+            payload['reconstruction'] = dict(self._reconstruction_state)
         msg = String()
         msg.data = json.dumps(payload)
         self._state_pub.publish(msg)
@@ -1727,6 +1871,7 @@ class GhostGameNode(Node):
             self._stiffness_state = [0.0] * n
             self._abort_requested = False
             self._go_home_requested = False
+        self._reset_reconstruction_state()
         self._speak(self.tts_setup_text)
 
         self.get_logger().info('Switching into impedance interaction chain')
@@ -1935,6 +2080,7 @@ class GhostGameNode(Node):
                 return
             if face_result == 'not_found':
                 return
+            self._submit_face_reconstruction()
             if self.face_gesture_enabled:
                 gesture_result = self._run_face_inspection_gesture()
                 if gesture_result == 'abort':

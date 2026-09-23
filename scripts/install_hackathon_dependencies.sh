@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Restore the non-image dependencies used by the Ghost Game demo after the
+# Restore the runtime dependencies used by the Ghost Game demo after the
 # zephyr_dev container is recreated. Safe to run more than once.
 
 set -Eeuo pipefail
@@ -51,7 +51,9 @@ run_as_root() {
 }
 
 missing_apt_packages=()
-for package in python3-pip libportaudio2 libpulse0; do
+for package in \
+  python3-pip libportaudio2 libpulse0 \
+  python3-opencv python3-numpy python3-requests python3-yaml; do
   if ! dpkg-query -W -f='${Status}' "${package}" 2>/dev/null \
       | grep -q 'ok installed'; then
     missing_apt_packages+=("${package}")
@@ -136,7 +138,8 @@ Next steps:
   source /opt/ros/jazzy/setup.bash
   cd /workspaces/zephyr-dev/zephyr_ws
   colcon build --symlink-install --packages-select \\
-    ghost_tts ghost_game_orchestrator ghost_game_face_detection ghost_game
+    ghost_tts flux_image_editor ghost_game_orchestrator \
+    ghost_game_face_detection ghost_game
   source install/setup.bash
   ros2 launch ghost_game ghost_game.launch.py
 EOF

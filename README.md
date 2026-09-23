@@ -1,6 +1,6 @@
 # Ghost Game
 
-This repository is split into four ROS 2 packages with one-way ownership:
+This repository is split into five ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
 | --- | --- |
@@ -8,9 +8,10 @@ This repository is split into four ROS 2 packages with one-way ownership:
 | `ghost_game_face_detection` | RGB image input, nearest-face selection, `vision_msgs` bbox output, and annotated debug images. It does not know the game state. |
 | `ghost_game_orchestrator` | Game state machine, controller/gripper coordination, success flow, and terminal/web monitors. It does not implement face detection. |
 | `ghost_tts` | Offline Piper Chinese speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
+| `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its output is the prepared image input for a later image-to-3D node. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
-ghost_game_face_detection, ghost_tts}`. The functional packages do not depend
+ghost_game_face_detection, ghost_tts, flux_image_editor}`. The functional packages do not depend
 on each other; the orchestrator sends plain-text cues to `ghost_tts` over ROS.
 
 "Find the Ghost" arm interaction demo. The arm silently picks 6 secret joint
@@ -38,6 +39,23 @@ wrist scan. The default `face_search_timeout: 0.0` keeps searching until a
 face is acquired or the operator requests abort/return-home. This uses bbox
 area as the distance proxy because the current camera launch has unregistered
 depth (`depth_registration: false`).
+
+Once tracking has held the expanded bbox at image center, the orchestrator
+publishes one reconstruction prompt. The detector continuously publishes that
+same selected full-head region as `sensor_msgs/Image` on
+`/nearest_face/head_crop`, and `flux_image_editor` pairs its latest crop with
+the prompt without blocking arm motion. The edited image is published on
+`/ghost/reconstruction/image` and its exact PNG bytes on
+`/ghost/reconstruction/image_png`; JSON progress and the saved path appear on
+`/ghost/reconstruction/status` and inside the orchestrator state as
+`reconstruction`. This stage prepares an image for 3D reconstruction; the
+actual mesh generator is a separate future `img2mesh`/Tripo node.
+Every submitted full-head crop is saved before the HTTP request under
+`/workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures/<request_id>_head_crop.png`.
+The most recent capture is also available at the stable path
+`/workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures/latest_head_crop.png`,
+even when the FLUX inference service is offline. This directory is mounted
+from the workspace, so captures survive container recreation.
 
 Each important state transition also emits a Chinese voice cue: game setup,
 search start, every newly locked joint, all-found, face scan, dance, done,
@@ -123,7 +141,8 @@ shipping a product; see `ghost_tts/THIRD_PARTY.md`.
 source /opt/ros/jazzy/setup.bash
 cd /workspaces/zephyr-dev/zephyr_ws
 colcon build --symlink-install --packages-select \
-  ghost_tts ghost_game_orchestrator ghost_game_face_detection ghost_game
+  ghost_tts flux_image_editor ghost_game_orchestrator \
+  ghost_game_face_detection ghost_game
 ```
 
 ## Running it: which terminal runs what
@@ -142,7 +161,8 @@ ros2 launch zephyr_arm_bringup real_world.launch.py \
 source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 ros2 launch ghost_game ghost_game.launch.py
 ```
-This starts the orchestrator, face detector, and offline TTS. Add
+This starts the orchestrator, face detector, offline TTS, and the lightweight
+FLUX ROS bridge. Add
 `enable_web_monitor:=true` to start the dashboard in the same launch, or
 `enable_face_detection:=false` when no camera/detector is needed. Use
 `enable_tts:=false` for silent operation. The TTS launch arguments are
@@ -151,6 +171,10 @@ This starts the orchestrator, face detector, and offline TTS. Add
 PortAudio name/index such as `0` is also accepted). Watch this
 terminal's log during testing - it's where "stuck/blocked",
 "found joint", "gravity compensation ramping to 0", etc. get printed.
+Use `enable_face_reconstruction:=false` when the FLUX service is not needed,
+or set `face_reconstruction_server_url:=http://HOST:8090` when it runs on a
+different machine. A missing inference server reports an asynchronous
+reconstruction error and does not stop the gesture or game flow.
 
 For development, each functional package can also run independently:
 
@@ -162,6 +186,9 @@ ros2 launch ghost_game_face_detection face_detection.launch.py \
   model_path:=$(ros2 pkg prefix ghost_game)/share/ghost_game/models
 
 ros2 launch ghost_tts ghost_tts.launch.py audio_device:=pulse preset:=ghost
+
+ros2 run flux_image_editor flux_image_editor_node --ros-args \
+  --params-file $(ros2 pkg prefix flux_image_editor)/share/flux_image_editor/config/ghost_game.yaml
 
 # Queue a one-shot test line; the stop service cancels active and queued lines.
 ros2 topic pub --once /ghost/tts/text std_msgs/msg/String \
@@ -275,6 +302,8 @@ stuck/blocked back-off, etc). Before a real show, double check:
 - `face_scan_offsets` / `face_*_max_offset` / `face_servo_*` - scan coverage,
   direct-command rate, speed limit, stale-frame freeze, and hard local motion
   bounds around the measured observation pose.
+- `enable_face_reconstruction` / `face_reconstruction_*` - asynchronous FLUX
+  submission, ROS topics, and the identity-preserving preprocessing prompt.
 - `tts_*_text` / `tts_joint_found_texts` - edit the stage script without
   changing Python. The joint-found list must contain exactly six lines.
 
