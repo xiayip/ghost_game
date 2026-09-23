@@ -7,8 +7,8 @@
 | 标签 | 含义与识别方式 | 默认交互请求 |
 |---|---|---|
 | `open_palm` | 张掌；稳定保持后，以当前位置为中点输出手掌平移量 | `palm_follow` |
-| `handshake_offer` | 横向伸出的侧向张手；几何规则产生的握手邀请候选 | `handshake` |
-| `fist_bump_offer` | 握拳并朝向镜头的几何候选 | `fist_bump` |
+| `handshake_offer` | 三指以上伸展、手掌纵轴朝向镜头的握手邀请候选 | `handshake` |
+| `fist_bump_offer` | 四指弯曲、拳面朝向镜头的碰拳邀请候选 | `fist_bump` |
 | `pointing` | 预训练指向类别或食指伸直、其余手指弯曲规则 | `point_at` |
 | `wave` | 张掌轨迹在短窗口内左右多次变向 | `wave` |
 | `thumb_up` | 竖拇指 | `acknowledge` |
@@ -17,7 +17,7 @@
 
 MediaPipe 原模型提供 21 个手部关键点及有限的静态类别，**不自带握手、碰拳、挥手分类器**。这里的握手、碰拳是意图候选；侧视、遮挡和手部旋转会影响规则，需在真机视角采集数据验证。它们不能证明双方已接触，也不能仅凭 RGB 得到手掌在机械臂基座下的位置。[官方能力与坐标定义](https://developers.google.com/edge/mediapipe/solutions/vision/gesture_recognizer/python)
 
-每条有效结果包含标签、置信度、来源 `classifier/heuristic`、手部跟踪 ID 和源时间戳。`hand_id` 是短期几何关联编号，不是人物身份。当前不关联人脸与手所属人物；默认检查最多两只手，多手同时出现时停止触发，先采用单人、单手交互。
+每条有效结果包含标签、置信度、来源 `classifier/heuristic`、手部跟踪 ID 和源时间戳。内置标签的 `score` 来自模型；几何候选使用未校准的固定分数 `0.70`，同时保留 `raw_label/raw_score` 供现场调参，不能将两类分数直接比较。`hand_id` 是短期几何关联编号，不是人物身份。当前不关联人脸与手所属人物；默认检查最多两只手，多手同时出现时停止触发，先采用单人、单手交互。
 
 ## 像“张掌移动无人机”一样使用
 

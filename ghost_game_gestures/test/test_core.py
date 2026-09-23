@@ -38,6 +38,24 @@ def scaled_palm(scale):
     return result
 
 
+def with_world_axis(result, x=.01, y=.01, z=-.04):
+    result.world_landmarks = [(0, 0, 0)] * 21
+    result.world_landmarks[9] = (x, y, z)
+    return result
+
+
+def curled_unknown():
+    result = hand('None')
+    points = [list(p) for p in result.landmarks]
+    for start in (5, 9, 13, 17):
+        x, y, z = points[start]
+        points[start + 1] = [x, y - .04, z]
+        points[start + 2] = [x + .05, y, z]
+        points[start + 3] = [x + .02, y + .04, z]
+    result.landmarks = points
+    return result
+
+
 class GestureCoreTests(unittest.TestCase):
     def process(self, engine, obs=None, stamp=0, **kwargs):
         return engine.process([obs or hand()], stamp, stamp, **kwargs)
@@ -222,11 +240,28 @@ class GestureCoreTests(unittest.TestCase):
         obs = hand('Closed_Fist')
         ordinary = self.process(GestureEngine(), obs)
         self.assertEqual(ordinary['label'], 'closed_fist')
-        obs.world_landmarks = [(0, 0, 0)] * 21
-        obs.world_landmarks[9] = (.001, .001, -.04)
+        with_world_axis(obs, .001, .001, -.04)
         result = self.process(GestureEngine(), obs)
         self.assertEqual(result['label'], 'fist_bump_offer')
         self.assertEqual(result['source'], 'heuristic')
+
+    def test_perspective_none_category_can_be_handshake_or_fist_bump(self):
+        handshake_obs = with_world_axis(hand('None', score=.2))
+        handshake = self.process(GestureEngine(), handshake_obs)
+        self.assertEqual(handshake['label'], 'handshake_offer')
+        self.assertEqual(handshake['source'], 'heuristic')
+        self.assertEqual(handshake['score'], .70)
+        self.assertEqual(handshake['raw_score'], .2)
+        fist_obs = curled_unknown()
+        fist_obs.score = .2
+        fist_bump = self.process(GestureEngine(), with_world_axis(fist_obs))
+        self.assertEqual(fist_bump['label'], 'fist_bump_offer')
+        self.assertEqual(fist_bump['source'], 'heuristic')
+        self.assertEqual(fist_bump['score'], .70)
+
+    def test_perspective_candidates_require_camera_facing_margin(self):
+        side_on = self.process(GestureEngine(), with_world_axis(hand('None'), .04, 0, -.01))
+        self.assertEqual(side_on['label'], 'unknown')
 
     def test_wave_requires_reversals_and_not_small_jitter(self):
         engine = GestureEngine(hold_seconds=.2, cooldown_seconds=0)

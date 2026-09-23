@@ -156,19 +156,41 @@ class GestureEngine:
         return points, center, span
 
     @staticmethod
-    def _is_pointing(points):
+    def _extended_fingers(points):
         def extended(start):
             a, b, c, d = points[start:start+4]
             return (_angle(a, b, c) >= 155 and _angle(b, c, d) >= 145
                     and _distance(d, points[0]) > 1.12 * _distance(b, points[0]))
-        return extended(5) and not any(extended(i) for i in (9, 13, 17))
+        return [extended(start) for start in (5, 9, 13, 17)]
+
+    @classmethod
+    def _is_pointing(cls, points):
+        extended = cls._extended_fingers(points)
+        return extended[0] and not any(extended[1:])
 
     def _classify(self, hand, points):
-        if hand.score < self.threshold:
-            return 'unknown', 'low_confidence'
         label = _LABELS.get(hand.label, 'unknown')
         if label == 'unknown' and self._is_pointing(points):
-            return 'pointing', 'heuristic'
+            return 'pointing', 'heuristic', .70
+        extended_count = sum(self._extended_fingers(points))
+        toward_camera = False
+        if hand.world_landmarks is not None:
+            w = hand.world_landmarks
+            axis = [w[9][i] - w[0][i] for i in range(3)]
+            # Calibrated from the local end-effector-camera view. A negative
+            # world-z longitudinal axis means the offered hand points toward
+            # the camera. Keep a transverse margin to reject frontal palms.
+            toward_camera = (axis[2] < -.025
+                             and -axis[2] > .7 * math.hypot(axis[0], axis[1]))
+        if toward_camera:
+            # Edge-on offered hands are commonly assigned MediaPipe's None
+            # category; finger geometry separates them from an offered fist.
+            if label in ('open_palm', 'unknown') and extended_count >= 3:
+                return 'handshake_offer', 'heuristic', .70
+            if label == 'closed_fist' or (label == 'unknown' and extended_count == 0):
+                return 'fist_bump_offer', 'heuristic', .70
+        if hand.score < self.threshold:
+            return 'unknown', 'low_confidence', 0.0
         if label == 'open_palm':
             axis = [points[9][i] - points[0][i] for i in (0, 1)]
             length = math.hypot(*axis)
@@ -176,13 +198,9 @@ class GestureEngine:
             # An edge-on open hand extended horizontally is a handshake offer
             # candidate. RGB cannot establish actual handshake intent/contact.
             if length > 1e-4 and width < .45 * length and abs(axis[0]) > 1.5 * abs(axis[1]):
-                return 'handshake_offer', 'heuristic'
-        if label == 'closed_fist' and hand.world_landmarks is not None:
-            w = hand.world_landmarks
-            axis = [w[9][i] - w[0][i] for i in range(3)]
-            if axis[2] < -.015 and -axis[2] > 1.8 * math.hypot(axis[0], axis[1]):
-                return 'fist_bump_offer', 'heuristic'
-        return label, 'classifier' if label != 'unknown' else 'unsupported'
+                return 'handshake_offer', 'heuristic', .70
+        return (label, 'classifier' if label != 'unknown' else 'unsupported',
+                float(hand.score) if label != 'unknown' else 0.0)
 
     def _is_wave(self, center, stamp, span):
         self._wave.append((stamp, center[0], center[1]))
@@ -262,7 +280,7 @@ class GestureEngine:
             self._hand_count += 1
             hand_id = self._hand_count
         self._track = (center, span, hand.handedness, hand_id)
-        label, source = self._classify(hand, points)
+        label, source, score = self._classify(hand, points)
         if label == 'open_palm':
             if self._is_wave(center, stamp, span):
                 label, source = 'wave', 'temporal_heuristic'
@@ -286,7 +304,7 @@ class GestureEngine:
         if stable and not self._latched and stamp + 1e-9 >= self._next_event_after:
             self._event_count += 1
             events.append({'event_id': f'{self._prefix}:{self._event_count}', 'label': label,
-                           'stamp': float(stamp), 'hand_id': hand_id, 'score': float(hand.score),
+                           'stamp': float(stamp), 'hand_id': hand_id, 'score': score,
                            'source': source})
             self._latched = label
             self._release_since = None
@@ -319,6 +337,7 @@ class GestureEngine:
             if norm > 1e-6:
                 pointing = [dx / norm, dy / norm]
         return {'valid': True, 'reason': 'ok', 'stamp': float(stamp), 'hand_id': hand_id,
-                'label': label, 'score': float(hand.score), 'source': source,
+                'label': label, 'score': score, 'source': source,
+                'raw_label': hand.label, 'raw_score': float(hand.score),
                 'center': center, 'center_px': [center[0] * frame_size[0], center[1] * frame_size[1]],
                 'pointing': pointing, 'events': events, 'control': control}
