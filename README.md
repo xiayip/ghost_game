@@ -73,6 +73,28 @@ reached that pose (`success_pose_reached`, the `face_*` phases, `dancing`, or
 `done`). At the same time it hides the joint-card list and Arm Pose 3D panel,
 restoring them automatically when the game leaves those post-turn phases.
 
+The dashboard also includes a PBR GLB viewer labelled “Ghost 三维重建体”.
+During integration it loads the local sample at
+`/workspaces/zephyr-dev/zephyr_ws/outputs/tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb`.
+The browser receives it from the same-origin `/api/mesh/model.glb` endpoint,
+auto-fits it to the viewport, preserves its textures/materials, and supports
+orbit, zoom, and slow automatic rotation.
+
+The production image-to-3D node can replace that sample by publishing an
+HTTP(S) GLB URL as `std_msgs/msg/String` on
+`/ghost/reconstruction/model_url`. The web bridge downloads the file on a
+background thread, validates the GLB header and size, caches up to 100 MiB,
+and updates the viewer without exposing a signed upstream URL to the browser
+or requiring upstream CORS headers:
+
+```bash
+ros2 topic pub --once /ghost/reconstruction/model_url std_msgs/msg/String \
+  "{data: 'https://example.invalid/generated/ghost.glb'}"
+```
+
+Override the temporary local model or topic with the unified launch arguments
+`web_mesh_model_path` and `web_mesh_url_topic`.
+
 The success turn is also checked against live joint feedback. If the
 impedance JTC reports a goal-tolerance abort because of the real arm's small
 static load residual, the dashboard can still enter the camera view only when

@@ -777,6 +777,152 @@ header {
 }
 .camera-body:has(img.offline) .camera-offline { display: block; }
 
+.mesh-panel {
+  margin-top: 20px;
+  background: var(--bg-surface);
+  border: 1px solid rgba(0, 212, 255, 0.24);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 28px rgba(0, 212, 255, 0.04);
+}
+.mesh-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default);
+}
+.mesh-head strong {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-cyber-cn);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+}
+.mesh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  color: var(--fg-tertiary);
+}
+.mesh-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--grey-600);
+}
+.mesh-status[data-tone="loading"] i {
+  background: var(--warning-400);
+  box-shadow: 0 0 10px rgba(255, 200, 87, 0.55);
+  animation: voice-led 0.8s steps(2, end) infinite;
+}
+.mesh-status[data-tone="ready"] { color: var(--success-400); }
+.mesh-status[data-tone="ready"] i {
+  background: var(--success-400);
+  box-shadow: var(--glow-success);
+}
+.mesh-status[data-tone="error"] { color: var(--danger-400); }
+.mesh-status[data-tone="error"] i {
+  background: var(--danger-400);
+  box-shadow: 0 0 10px rgba(255, 61, 113, 0.55);
+}
+.mesh-body {
+  position: relative;
+  height: min(58vh, 620px);
+  min-height: 440px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(0, 212, 255, 0.09), transparent 34%),
+    linear-gradient(rgba(0, 212, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.025) 1px, transparent 1px),
+    #0c1015;
+  background-size: auto, 32px 32px, 32px 32px, auto;
+}
+.mesh-body::before,
+.mesh-body::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  pointer-events: none;
+}
+.mesh-body::before {
+  top: 16px;
+  left: 16px;
+  border-top: 1px solid var(--cyan-400);
+  border-left: 1px solid var(--cyan-400);
+}
+.mesh-body::after {
+  right: 16px;
+  bottom: 16px;
+  border-right: 1px solid var(--cyan-400);
+  border-bottom: 1px solid var(--cyan-400);
+}
+.mesh-viewport,
+.mesh-viewport canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.mesh-hud {
+  position: absolute;
+  z-index: 4;
+  right: 20px;
+  bottom: 18px;
+  left: 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.13em;
+  color: var(--cyan-700);
+}
+.mesh-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  color: var(--fg-tertiary);
+}
+.mesh-placeholder.hidden { display: none; }
+.mesh-placeholder strong {
+  font-family: var(--font-cyber-cn);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+}
+.mesh-placeholder span {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+}
+.mesh-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--border-default);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: var(--fg-muted);
+}
+
 .toggle-btn {
   flex: 0 0 auto;
   width: 24px;
@@ -928,4 +1074,8 @@ header {
   .mission-route { grid-template-columns: repeat(2, 1fr); row-gap: 16px; }
   .mission-route::before { display: none; }
   .viewport { min-width: 0; height: 430px; }
+  .mesh-head { align-items: flex-start; flex-direction: column; }
+  .mesh-body { min-height: 380px; height: 52vh; }
+  .mesh-foot { flex-direction: column; }
+  .mesh-hud span:first-child { display: none; }
 }

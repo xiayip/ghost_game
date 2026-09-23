@@ -22,6 +22,8 @@ def generate_launch_description():
     face_reconstruction_server_url = LaunchConfiguration(
         "face_reconstruction_server_url")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
+    web_mesh_model_path = LaunchConfiguration("web_mesh_model_path")
+    web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
     enable_tts = LaunchConfiguration("enable_tts")
     tts_config = LaunchConfiguration("tts_config")
     tts_backend = LaunchConfiguration("tts_backend")
@@ -68,6 +70,19 @@ def generate_launch_description():
                 "enable_web_monitor",
                 default_value="true",
                 description="Start the optional web dashboard on port 8765",
+            ),
+            DeclareLaunchArgument(
+                "web_mesh_model_path",
+                default_value=(
+                    "/workspaces/zephyr-dev/zephyr_ws/outputs/"
+                    "tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb"
+                ),
+                description="Local GLB fallback shown in the web dashboard",
+            ),
+            DeclareLaunchArgument(
+                "web_mesh_url_topic",
+                default_value="/ghost/reconstruction/model_url",
+                description="std_msgs/String topic carrying a remote GLB URL",
             ),
             DeclareLaunchArgument(
                 "enable_face_reconstruction",
@@ -193,6 +208,12 @@ def generate_launch_description():
                 executable="ghost_game_web_monitor",
                 name="ghost_game_web_monitor",
                 output="screen",
+                parameters=[{
+                    "mesh_model_path": ParameterValue(
+                        web_mesh_model_path, value_type=str),
+                    "mesh_url_topic": ParameterValue(
+                        web_mesh_url_topic, value_type=str),
+                }],
                 condition=IfCondition(enable_web_monitor),
             ),
         ]

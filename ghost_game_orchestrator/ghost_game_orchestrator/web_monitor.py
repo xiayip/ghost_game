@@ -22,6 +22,10 @@ CompressedImage, JPEG) so the dashboard shows the selected face bounding box
 The same bridge subscribes to ghost_tts's accepted-caption stream and exposes
 the latest caption as JSON. The browser therefore shows exactly the line the
 voice worker receives, without duplicating the game's stage script.
+
+It also serves a validated local GLB fallback and subscribes to a generated
+model URL. Remote models are downloaded and cached by the bridge so the
+browser uses a same-origin URL and never sees signed upstream query strings.
 """
 
 import functools
@@ -32,6 +36,8 @@ import os
 import queue
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import rclpy
@@ -147,6 +153,143 @@ class _TtsStore:
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
 
 
+class _MeshStore:
+    """Latest GLB model, seeded from disk and replaceable by a ROS URL.
+
+    Remote files are downloaded by the ROS node into this bounded cache. The
+    browser always fetches the same-origin /api/mesh/model.glb endpoint, so a
+    signed model URL does not leak to the page and the upstream server does
+    not need permissive CORS headers.
+    """
+
+    def __init__(self, local_path='', max_bytes=100 * 1024 * 1024,
+                 timeout=60.0):
+        self._lock = threading.Lock()
+        self._data = None
+        self._status = 'unavailable'
+        self._message = 'waiting_for_model'
+        self._source = None
+        self._version = 0
+        self._updated_at = None
+        self._generation = 0
+        self.max_bytes = int(max_bytes)
+        self.timeout = float(timeout)
+        if self.max_bytes <= 0 or self.timeout <= 0:
+            raise ValueError('mesh max_bytes and timeout must be positive')
+        if str(local_path).strip():
+            self.load_local(local_path)
+
+    @staticmethod
+    def _validate_glb(data):
+        if len(data) < 12 or data[:4] != b'glTF':
+            raise ValueError('not_a_glb_file')
+        version = int.from_bytes(data[4:8], 'little')
+        declared_size = int.from_bytes(data[8:12], 'little')
+        if version != 2:
+            raise ValueError('unsupported_glb_version')
+        if declared_size != len(data):
+            raise ValueError('glb_length_mismatch')
+
+    def _commit(self, data, source, generation=None):
+        self._validate_glb(data)
+        if len(data) > self.max_bytes:
+            raise ValueError('mesh_exceeds_size_limit')
+        with self._lock:
+            if generation is not None and generation != self._generation:
+                return False
+            self._data = bytes(data)
+            self._source = source
+            self._status = 'ready'
+            self._message = ''
+            self._version += 1
+            self._updated_at = time.time()
+            return True
+
+    def load_local(self, local_path):
+        path = Path(local_path).expanduser()
+        try:
+            size = path.stat().st_size
+            if size > self.max_bytes:
+                raise ValueError('mesh_exceeds_size_limit')
+            data = path.read_bytes()
+            self._commit(data, 'local')
+            return True
+        except Exception as error:  # noqa: BLE001 - status is exposed to UI
+            with self._lock:
+                self._status = 'error'
+                self._message = f'local_model_error:{type(error).__name__}'
+            return False
+
+    def update_from_url(self, url, opener=None):
+        """Download one published URL. Intended to run on a daemon thread."""
+        url = str(url).strip()
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+        parsed = urllib.parse.urlsplit(url)
+        if (parsed.scheme not in ('http', 'https') or not parsed.netloc or
+                parsed.username is not None or parsed.password is not None):
+            with self._lock:
+                self._status = 'error'
+                self._message = 'invalid_model_url'
+            return False
+
+        with self._lock:
+            self._status = 'downloading'
+            self._message = ''
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                'Accept': 'model/gltf-binary,application/octet-stream',
+                'User-Agent': 'ghost-game-mesh-bridge/1.0',
+            })
+        open_url = opener or urllib.request.urlopen
+        try:
+            with open_url(request, timeout=self.timeout) as response:
+                content_length = response.headers.get('Content-Length')
+                if (content_length is not None and
+                        int(content_length) > self.max_bytes):
+                    raise ValueError('mesh_exceeds_size_limit')
+                chunks = []
+                total = 0
+                while True:
+                    chunk = response.read(min(1024 * 1024,
+                                              self.max_bytes + 1 - total))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total > self.max_bytes:
+                        raise ValueError('mesh_exceeds_size_limit')
+            return self._commit(b''.join(chunks), 'published_url', generation)
+        except Exception as error:  # noqa: BLE001 - preserve last good model
+            with self._lock:
+                if generation == self._generation:
+                    self._status = 'error'
+                    self._message = f'model_download_error:{type(error).__name__}'
+            return False
+
+    def get_model(self):
+        with self._lock:
+            return self._data
+
+    def get_json(self):
+        with self._lock:
+            payload = {
+                'status': self._status,
+                'version': self._version,
+                'bytes': len(self._data) if self._data is not None else 0,
+                'updated_at': self._updated_at,
+                'source': self._source,
+                'message': self._message,
+                'model_url': (
+                    f'/api/mesh/model.glb?v={self._version}'
+                    if self._data is not None else None),
+            }
+        return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+
+
 class _ControlCall:
     """One HTTP request waiting for its ROS Trigger service response."""
 
@@ -234,6 +377,7 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     state_store: _StateStore = None    # bound by GhostGameWebMonitor before serving
     camera_store: _CameraStore = None  # bound by GhostGameWebMonitor before serving
     tts_store: _TtsStore = None        # bound by GhostGameWebMonitor before serving
+    mesh_store: _MeshStore = None      # local fallback + latest URL model
     control_bridge: _ControlBridge = None
     urdf_text: str = None              # expanded URDF XML, or None if unavailable
     protocol_version = 'HTTP/1.1'    # keep-alive, so ~30 mesh fetches don't need 30 fresh sockets
@@ -263,6 +407,19 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path in ('/api/tts', '/api/tts/'):
             payload = self.tts_store.get_json() if self.tts_store else '{}'
             self._send_bytes(payload.encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/mesh', '/api/mesh/',
+                    '/api/mesh/info', '/api/mesh/info/'):
+            payload = self.mesh_store.get_json() if self.mesh_store else '{}'
+            self._send_bytes(
+                payload.encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/mesh/model.glb', '/api/mesh/model.glb/'):
+            model = self.mesh_store.get_model() if self.mesh_store else None
+            if model is None:
+                self.send_error(404, 'No reconstructed model available')
+                return
+            self._send_bytes(model, 'model/gltf-binary')
             return
         if path in ('/api/camera.jpg', '/api/camera.jpg/'):
             jpeg_bytes = self.camera_store.get() if self.camera_store else None
@@ -324,6 +481,15 @@ class GhostGameWebMonitor(Node):
         self.declare_parameter('enable_camera', True)
         self.declare_parameter(
             'camera_topic', '/nearest_face/debug_image/compressed')
+        self.declare_parameter('enable_mesh_model', True)
+        self.declare_parameter(
+            'mesh_model_path',
+            '/workspaces/zephyr-dev/zephyr_ws/outputs/'
+            'tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb')
+        self.declare_parameter(
+            'mesh_url_topic', '/ghost/reconstruction/model_url')
+        self.declare_parameter('mesh_max_bytes', 100 * 1024 * 1024)
+        self.declare_parameter('mesh_download_timeout', 60.0)
 
         state_topic = self.get_parameter('state_topic').value
         port = int(self.get_parameter('port').value)
@@ -354,10 +520,21 @@ class GhostGameWebMonitor(Node):
             self.create_subscription(
                 CompressedImage, camera_topic, self._on_camera, qos_profile_sensor_data)
 
+        self._mesh_store = _MeshStore(
+            self.get_parameter('mesh_model_path').value
+            if self.get_parameter('enable_mesh_model').value else '',
+            max_bytes=self.get_parameter('mesh_max_bytes').value,
+            timeout=self.get_parameter('mesh_download_timeout').value)
+        if self.get_parameter('enable_mesh_model').value:
+            self.create_subscription(
+                String, self.get_parameter('mesh_url_topic').value,
+                self._on_mesh_url, 10)
+
         web_dir = get_package_share_directory('ghost_game_orchestrator') + '/web'
         _StateHTTPRequestHandler.state_store = self._store
         _StateHTTPRequestHandler.camera_store = self._camera_store
         _StateHTTPRequestHandler.tts_store = self._tts_store
+        _StateHTTPRequestHandler.mesh_store = self._mesh_store
         _StateHTTPRequestHandler.control_bridge = self._control_bridge
         if self.get_parameter('enable_robot_model').value:
             _StateHTTPRequestHandler.urdf_text = _expand_urdf(
@@ -370,10 +547,14 @@ class GhostGameWebMonitor(Node):
         self._server_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._server_thread.start()
 
-        model_status = 'loaded' if _StateHTTPRequestHandler.urdf_text else 'unavailable (skeleton fallback)'
+        model_status = (
+            'loaded' if _StateHTTPRequestHandler.urdf_text
+            else 'unavailable (skeleton fallback)')
         self.get_logger().info(
             f'Ghost game dashboard: http://localhost:{port}  '
-            f'(watching {state_topic} and {tts_text_topic}, robot model {model_status})')
+            f'(watching {state_topic} and {tts_text_topic}, robot model '
+            f'{model_status}, reconstructed mesh '
+            f'{json.loads(self._mesh_store.get_json())["status"]})')
 
     def _on_state(self, msg: String):
         self._store.set(msg.data)
@@ -383,6 +564,25 @@ class GhostGameWebMonitor(Node):
 
     def _on_tts_text(self, msg: String):
         self._tts_store.set(msg.data)
+
+    def _on_mesh_url(self, msg: String):
+        if not msg.data.strip():
+            return
+        self.get_logger().info(
+            'Received reconstructed-model URL; downloading GLB in background')
+
+        def download():
+            if self._mesh_store.update_from_url(msg.data):
+                info = json.loads(self._mesh_store.get_json())
+                self.get_logger().info(
+                    f'Reconstructed GLB ready: {info["bytes"]} bytes, '
+                    f'version={info["version"]}')
+            else:
+                info = json.loads(self._mesh_store.get_json())
+                self.get_logger().warning(
+                    f'Reconstructed GLB update failed: {info["message"]}')
+
+        threading.Thread(target=download, daemon=True).start()
 
     def _dispatch_controls(self):
         for _ in range(8):
