@@ -1,5 +1,10 @@
 # Ghost Game
 
+Low-latency RS wrist-camera follow update: see [deployment and validation](LIGHTWEIGHT_FOLLOW.md).
+The detector now runs on a latest-frame worker at up to 30 Hz. The original
+head-crop topic is retained; `/nearest_face/tracking` carries a separate
+unexpanded face box and short-term target ID for the 60 Hz arm loop.
+
 This repository is split into four ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
@@ -20,7 +25,7 @@ locks rigid (impedance hold); once all 6 are found the gripper opens and a
 smooth, zero-endpoint-velocity/acceleration trajectory moves the arm to the
 configured success pose through the impedance JTC. At that approximately
 180-degree observation pose, Step 2 scans for a nearby stable face and aims
-the wrist camera until the full-head bbox is centered. An optional dance can
+the wrist camera until the tracked face bbox is centered. An optional dance can
 run afterward. Everything runs as one background-thread state machine inside
 `ghost_game_node` - no BT involved.
 

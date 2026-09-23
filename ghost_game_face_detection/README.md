@@ -10,6 +10,8 @@ as the nearest-person proxy. RGB alone cannot provide metric distance.
 
 - Input: `/camera/color/image_raw/compressed` (`sensor_msgs/msg/CompressedImage`)
 - Output: `/nearest_face/detection` (`vision_msgs/msg/Detection2DArray`)
+- Tracking: `/nearest_face/tracking` (same type; unexpanded face box + geometric ID)
+- Diagnostics: `/nearest_face/latency` (`std_msgs/msg/String`, JSON)
 - Debug image: `/nearest_face/debug_image` (`sensor_msgs/msg/Image`)
 - Web/debug JPEG: `/nearest_face/debug_image/compressed`
   (`sensor_msgs/msg/CompressedImage`)
@@ -50,8 +52,12 @@ ros2 launch ghost_game ghost_game.launch.py enable_face_detection:=false
 
 ## Notes
 
-- Selection is recalculated every processed frame; there is no identity
-  tracking or hysteresis.
+- Crop selection is recalculated every processed frame. The separate tracking
+  topic maintains a short-term geometric target; this is not face recognition.
+- Source age is checked before/after inference and before publication. The
+  callback and worker each retain only the latest pending message/result.
+- Debug images are subscriber-driven thumbnails at up to 5 Hz on a separate
+  worker; their pixel geometry differs from the original-image detection boxes.
 - `max_processing_rate` limits CPU usage independently of camera frame rate.
 - `bbox_expand_left_ratio`, `bbox_expand_right_ratio`,
   `bbox_expand_top_ratio`, and `bbox_expand_bottom_ratio` control the full-head

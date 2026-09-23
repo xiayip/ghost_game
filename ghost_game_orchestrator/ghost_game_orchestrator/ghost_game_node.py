@@ -55,11 +55,11 @@ from vision_msgs.msg import Detection2DArray
 
 from .face_tracking import (
     FaceStabilityGate,
+    SmoothFaceServo,
     face_matches_track,
     face_is_acceptable,
     make_face_sample,
     scan_target,
-    servo_target,
 )
 from .mock_trajectory import (
     minimum_quintic_duration,
@@ -154,6 +154,10 @@ class GhostGameNode(Node):
             self.face_servo_rate_hz,
             self.face_servo_max_joint_speed,
             self.face_servo_detection_timeout,
+            self.face_servo_acceleration,
+            self.face_filter_cutoff_hz,
+            self.face_max_command_lead,
+            self.face_joint_feedback_timeout,
             self.face_center_tolerance,
             self.face_center_release_tolerance,
             self.face_center_dwell_time,
@@ -229,11 +233,18 @@ class GhostGameNode(Node):
         self._running = False
 
         self._joint_positions = {}    # name -> latest position
+        self._joint_received = {}
+        self._joint_stamp = {}
+        self._joint_last_clock = 0
         self._joint_positions_lock = threading.Lock()
         self._active_goal_lock = threading.Lock()
         self._active_trajectory_goal = None
         self._face_lock = threading.Lock()
         self._camera_size = None
+        self._camera_frame = None
+        self._face_last_stamp = 0
+        self._face_last_clock = 0
+        self._face_metrics = {}
         self._latest_face = None
         self._face_stable_for = 0.0
 
@@ -243,14 +254,14 @@ class GhostGameNode(Node):
 
         # -- Pub/Sub --
         self._joint_state_sub = self.create_subscription(
-            JointState, self.joint_states_topic, self._joint_state_cb, 50,
+            JointState, self.joint_states_topic, self._joint_state_cb, 1,
             callback_group=self._io_cb_group)
         self._camera_info_sub = self.create_subscription(
             CameraInfo, self.face_camera_info_topic, self._camera_info_cb,
             qos_profile_sensor_data, callback_group=self._io_cb_group)
         self._face_detection_sub = self.create_subscription(
             Detection2DArray, self.face_detection_topic,
-            self._face_detection_cb, 10, callback_group=self._io_cb_group)
+            self._face_detection_cb, 1, callback_group=self._io_cb_group)
         self._gripper_pub = self.create_publisher(JointState, self.gripper_command_topic, 10)
         self._state_pub = self.create_publisher(String, '~/state', 10)
         self._tts_pub = self.create_publisher(String, self.tts_text_topic, 10)
@@ -267,7 +278,7 @@ class GhostGameNode(Node):
         # Direct topic command (not the JTC) so the reference always reflects
         # the live measured pose - see _publish_impedance_command for why.
         self._impedance_command_pub = self.create_publisher(
-            JointTrajectoryPoint, f'/{self.impedance_controller}/commands', 10)
+            JointTrajectoryPoint, f'/{self.impedance_controller}/commands', 1)
         # JTC used for the success move and _return_home. The search phase
         # deliberately avoids it to prevent stale-setpoint backswing on lock.
         self._impedance_traj_client = ActionClient(
@@ -413,13 +424,13 @@ class GhostGameNode(Node):
         self.declare_parameter('success_settle_movement', 0.01)
         self.declare_parameter('enable_face_tracking', True)
         self.declare_parameter(
-            'face_detection_topic', '/nearest_face/detection')
+            'face_detection_topic', '/nearest_face/tracking')
         self.declare_parameter(
             'face_camera_info_topic', '/camera/color/camera_info')
-        self.declare_parameter('face_detection_max_age', 1.0)
-        self.declare_parameter('face_min_bbox_area_ratio', 0.015)
+        self.declare_parameter('face_detection_max_age', 0.15)
+        self.declare_parameter('face_min_bbox_area_ratio', 0.005)
         self.declare_parameter('face_max_bbox_area_ratio', 0.65)
-        self.declare_parameter('face_stable_time', 0.30)
+        self.declare_parameter('face_stable_time', 0.20)
         self.declare_parameter('face_stability_center_tolerance', 0.08)
         self.declare_parameter(
             'face_stability_area_relative_tolerance', 0.35)
@@ -452,7 +463,12 @@ class GhostGameNode(Node):
         self.declare_parameter('face_center_gain', 1.80)
         self.declare_parameter('face_servo_rate_hz', 60.0)
         self.declare_parameter('face_servo_max_joint_speed', 0.70)
-        self.declare_parameter('face_servo_detection_timeout', 0.20)
+        self.declare_parameter('face_servo_detection_timeout', 0.15)
+        self.declare_parameter('face_servo_acceleration', 1.0)
+        self.declare_parameter('face_filter_cutoff_hz', 6.0)
+        self.declare_parameter('face_max_command_lead', 0.06)
+        self.declare_parameter('face_joint_feedback_timeout', 0.20)
+        self.declare_parameter('face_continuous_follow', False)
         self.declare_parameter('face_center_tolerance', 0.08)
         self.declare_parameter('face_center_release_tolerance', 0.12)
         self.declare_parameter('face_center_dwell_time', 0.40)
@@ -601,6 +617,11 @@ class GhostGameNode(Node):
             p('face_servo_max_joint_speed').value)
         self.face_servo_detection_timeout = float(
             p('face_servo_detection_timeout').value)
+        self.face_servo_acceleration = float(p('face_servo_acceleration').value)
+        self.face_filter_cutoff_hz = float(p('face_filter_cutoff_hz').value)
+        self.face_max_command_lead = float(p('face_max_command_lead').value)
+        self.face_joint_feedback_timeout = float(p('face_joint_feedback_timeout').value)
+        self.face_continuous_follow = bool(p('face_continuous_follow').value)
         self.face_center_tolerance = float(
             p('face_center_tolerance').value)
         self.face_center_release_tolerance = float(
@@ -640,48 +661,70 @@ class GhostGameNode(Node):
     # ------------------------------------------------------------------ #
 
     def _joint_state_cb(self, msg: JointState):
+        now = time.monotonic()
+        stamp = msg.header.stamp.sec*1_000_000_000+msg.header.stamp.nanosec
+        clock_ns = self.get_clock().now().nanoseconds
+        age = (clock_ns-stamp)/1e9 if stamp else 0.
+        if age < -.03:
+            return
         with self._joint_positions_lock:
+            if clock_ns < self._joint_last_clock:
+                self._joint_stamp.clear()
+                self._joint_received.clear()
+            self._joint_last_clock = clock_ns
             for name, pos in zip(msg.name, msg.position):
-                self._joint_positions[name] = pos
+                if (math.isfinite(pos) and
+                        (not stamp or stamp > self._joint_stamp.get(name,0))):
+                    self._joint_positions[name] = pos
+                    self._joint_received[name] = now-max(0.,age)
+                    self._joint_stamp[name] = stamp
 
     def _camera_info_cb(self, msg: CameraInfo):
         if msg.width <= 0 or msg.height <= 0:
             return
         with self._face_lock:
             self._camera_size = (int(msg.width), int(msg.height))
+            self._camera_frame = msg.header.frame_id
 
     def _face_detection_cb(self, msg: Detection2DArray):
         now = time.monotonic()
+        now_ns = self.get_clock().now().nanoseconds
+        stamp = msg.header.stamp.sec*1_000_000_000+msg.header.stamp.nanosec
+        # Serialize checks AND assignment: callbacks use a reentrant group.
         with self._face_lock:
-            camera_size = self._camera_size
-        if camera_size is None or not msg.detections:
-            with self._face_lock:
+            if now_ns < self._face_last_clock:
+                self._face_last_stamp = 0
                 self._latest_face = None
-            return
+            self._face_last_clock = now_ns
+            if stamp <= self._face_last_stamp:
+                return
+            self._face_last_stamp = stamp
+            age = (now_ns-stamp)/1e9
+            self._face_metrics = dict(source_age_ms=age*1000, source_stamp_ns=stamp)
+            camera_size = self._camera_size
+            if (stamp <= 0 or not -.03 <= age <= self.face_detection_max_age or
+                    camera_size is None or not msg.detections or
+                    not msg.header.frame_id or
+                    (self._camera_frame and msg.header.frame_id != self._camera_frame)):
+                self._latest_face = None
+                return
+            detection = max(msg.detections,key=lambda item:float(item.bbox.size_x*item.bbox.size_y))
+            score = float(detection.results[0].hypothesis.score) if detection.results else 0.
+            try:
+                self._latest_face = make_face_sample(
+                    received_at=now, center_x=detection.bbox.center.position.x,
+                    center_y=detection.bbox.center.position.y, width=detection.bbox.size_x,
+                    height=detection.bbox.size_y, image_width=camera_size[0],
+                    image_height=camera_size[1], score=score, source_age_at_receive=max(0.,age),
+                    source_stamp=stamp/1e9, track_id=detection.id)
+            except ValueError:
+                self._latest_face = None
 
-        detection = max(
-            msg.detections,
-            key=lambda item: float(item.bbox.size_x * item.bbox.size_y),
-        )
-        score = (
-            float(detection.results[0].hypothesis.score)
-            if detection.results else 0.0
-        )
-        try:
-            sample = make_face_sample(
-                received_at=now,
-                center_x=detection.bbox.center.position.x,
-                center_y=detection.bbox.center.position.y,
-                width=detection.bbox.size_x,
-                height=detection.bbox.size_y,
-                image_width=camera_size[0],
-                image_height=camera_size[1],
-                score=score,
-            )
-        except ValueError:
-            sample = None
-        with self._face_lock:
-            self._latest_face = sample
+    def _face_positions_snapshot(self):
+        now = time.monotonic()
+        with self._joint_positions_lock:
+            return [self._joint_positions.get(j) if now-self._joint_received.get(j,0.) <= self.face_joint_feedback_timeout
+                    else None for j in self.joints]
 
     def _positions_snapshot(self):
         with self._joint_positions_lock:
@@ -760,6 +803,7 @@ class GhostGameNode(Node):
             face = self._face_sample_snapshot()
             with self._face_lock:
                 stable_for = self._face_stable_for
+                face_metrics = dict(self._face_metrics)
             payload['face'] = {
                 'detected': face is not None,
                 'accepted': face_is_acceptable(
@@ -771,6 +815,9 @@ class GhostGameNode(Node):
                 'error_y': None if face is None else face.error_y,
                 'score': None if face is None else face.score,
                 'stable_for': stable_for,
+                'latency': face_metrics,
+                'source_age_ms': None if face is None else (now-face.received_at+face.source_age_at_receive)*1000,
+                'track_id': None if face is None else face.track_id,
             }
         msg = String()
         msg.data = json.dumps(payload)
@@ -1156,7 +1203,7 @@ class GhostGameNode(Node):
 
     def _stream_face_scan_target(self, target):
         """Stream one smooth scan move and stop early when a face appears."""
-        start = self._positions_snapshot()
+        start = self._face_positions_snapshot()
         if any(position is None for position in start):
             self.get_logger().error('Lost /joint_states during face scan')
             return 'failed'
@@ -1174,6 +1221,9 @@ class GhostGameNode(Node):
             if request is not None:
                 return request
             now = time.monotonic()
+            if any(p is None for p in self._face_positions_snapshot()):
+                self.get_logger().error('Joint feedback expired during face scan')
+                return 'failed'
             progress = min(1.0, (now - started_at) / duration)
             command = trajectory_reference(
                 start, target, [False] * len(self.joints), target, progress)
@@ -1204,130 +1254,140 @@ class GhostGameNode(Node):
         return None
 
     def _center_face(self, reference, tracked_sample):
-        """Continuously servo the wrist until the head bbox is centered."""
+        """Continuously servo the wrist using the unexpanded tracked face box."""
         deadline = time.monotonic() + self.face_center_timeout
         centered_since = None
         following_since = None
         lost_since = None
-        command = self._positions_snapshot()
+        command = self._face_positions_snapshot()
         if any(position is None for position in command):
             return 'failed'
         command = list(command)
         period = 1.0 / self.face_servo_rate_hz
         previous_tick = time.monotonic()
         next_tick = previous_tick
+        smoother = SmoothFaceServo(self.face_filter_cutoff_hz,
+                                   self.face_servo_acceleration,self.face_max_command_lead)
+        initial_track_id = tracked_sample.track_id
 
         with self._state_lock:
             self._phase = 'face_centering'
 
-        while time.monotonic() < deadline:
-            request = self._face_control_request()
-            if request is not None:
-                return request
+        try:
+            while self.face_continuous_follow or time.monotonic() < deadline:
+                request = self._face_control_request()
+                if request is not None:
+                    return request
 
-            now = time.monotonic()
-            dt = min(max(0.0, now - previous_tick), 2.0 * period)
-            previous_tick = now
-            sample = self._face_sample_if_acceptable(
-                self.face_servo_detection_timeout)
-            if sample is None:
-                centered_since = None
-                if lost_since is None:
-                    lost_since = now
-                elif (now - lost_since >=
-                      self.face_target_lost_timeout):
+                now = time.monotonic()
+                dt = min(max(0.0, now - previous_tick), 2.0 * period)
+                previous_tick = now
+                measured = self._face_positions_snapshot()
+                if any(p is None for p in measured):
+                    self.get_logger().error('Joint feedback expired during face servo')
+                    return 'failed'
+                sample = self._face_sample_if_acceptable(
+                    self.face_servo_detection_timeout)
+                if sample is None:
+                    smoother.reset()
+                    centered_since = None
+                    if lost_since is None:
+                        lost_since = now
+                    elif (now - lost_since >=
+                          self.face_target_lost_timeout):
+                        self.get_logger().warn(
+                            'Stable face was lost during centering; resuming scan')
+                        return 'lost'
+                    # Hold the last safe equilibrium. Never keep integrating an
+                    # image error after the detector has stopped refreshing.
+                    self._publish_impedance_command(command)
+                    next_tick += period
+                    next_tick = max(next_tick, time.monotonic())
+                    time.sleep(max(0.0, next_tick - time.monotonic()))
+                    continue
+
+                if not face_matches_track(
+                        tracked_sample, sample,
+                        self.face_track_center_jump_tolerance,
+                        self.face_track_area_relative_jump_tolerance):
                     self.get_logger().warn(
-                        'Stable face was lost during centering; resuming scan')
+                        'Detected a different face during centering; '
+                        'resuming scan instead of chasing the new target')
+                    self._publish_impedance_command(command)
                     return 'lost'
-                # Hold the last safe equilibrium. Never keep integrating an
-                # image error after the detector has stopped refreshing.
-                self._publish_impedance_command(command)
+                if initial_track_id and sample.track_id != initial_track_id:
+                    self._publish_impedance_command(command)
+                    return 'lost'
+                tracked_sample = sample
+
+                lost_since = None
+                error_x = sample.error_x
+                error_y = sample.error_y
+                inside_center = (
+                    abs(error_x) <= self.face_center_tolerance and
+                    abs(error_y) <= self.face_center_tolerance)
+                inside_release = (
+                    abs(error_x) <= self.face_center_release_tolerance and
+                    abs(error_y) <= self.face_center_release_tolerance)
+                if centered_since is not None and not inside_release:
+                    centered_since = None
+                if centered_since is None and inside_center:
+                    centered_since = now
+                if (centered_since is not None and
+                        now - centered_since >= self.face_center_dwell_time):
+                    if following_since is None:
+                        following_since = now
+                        with self._state_lock:
+                            self._phase = 'face_following'
+                        self.get_logger().info(
+                            'Face centered; maintaining continuous tracking for '
+                            f'{self.face_follow_duration:.1f} s')
+                    if (not self.face_continuous_follow and
+                            now - following_since >= self.face_follow_duration and inside_release):
+                        self.get_logger().info(
+                            'Face follow complete: '
+                            f'error_x={error_x:.3f}, '
+                            f'error_y={error_y:.3f}, '
+                            f'area_ratio={sample.area_ratio:.4f}')
+                        return 'centered'
+
+                command, command_velocity = smoother.step(
+                    sample=sample, current_command=command, measured=measured,
+                    reference=reference,
+                    lower_limits=self.joint_lower_limits,
+                    upper_limits=self.joint_upper_limits,
+                    yaw_index=self.face_yaw_index,
+                    pitch_index=self.face_pitch_index,
+                    yaw_gain=self.face_center_gain,
+                    pitch_gain=self.face_center_gain,
+                    max_speed=self.face_servo_max_joint_speed,
+                    dt=dt,
+                    yaw_direction=self.face_yaw_direction,
+                    pitch_direction=self.face_pitch_direction,
+                    yaw_max_offset=self.face_yaw_max_offset,
+                    pitch_max_offset=self.face_pitch_max_offset,
+                    deadband=self.face_center_tolerance,
+                    joint_margin=self.face_joint_margin,
+                )
+                with self._face_lock:
+                    self._face_metrics.update(
+                        control_source_age_ms=(now-sample.received_at+sample.source_age_at_receive)*1000,
+                        control_dt_ms=dt*1000, track_id=sample.track_id)
+                self._publish_impedance_command(command, command_velocity)
                 next_tick += period
                 next_tick = max(next_tick, time.monotonic())
                 time.sleep(max(0.0, next_tick - time.monotonic()))
-                continue
 
-            if not face_matches_track(
-                    tracked_sample, sample,
-                    self.face_track_center_jump_tolerance,
-                    self.face_track_area_relative_jump_tolerance):
-                self.get_logger().warn(
-                    'Detected a different face during centering; '
-                    'resuming scan instead of chasing the new target')
-                return 'lost'
-            tracked_sample = sample
-
-            lost_since = None
-            error_x = sample.error_x
-            error_y = sample.error_y
-            inside_center = (
-                abs(error_x) <= self.face_center_tolerance and
-                abs(error_y) <= self.face_center_tolerance)
-            inside_release = (
-                abs(error_x) <= self.face_center_release_tolerance and
-                abs(error_y) <= self.face_center_release_tolerance)
-            if centered_since is not None and not inside_release:
-                centered_since = None
-            if centered_since is None and inside_center:
-                centered_since = now
-            if (centered_since is not None and
-                    now - centered_since >= self.face_center_dwell_time):
-                if following_since is None:
-                    following_since = now
-                    with self._state_lock:
-                        self._phase = 'face_following'
-                    self.get_logger().info(
-                        'Face centered; maintaining continuous tracking for '
-                        f'{self.face_follow_duration:.1f} s')
-                if (now - following_since >= self.face_follow_duration and
-                        inside_release):
-                    self.get_logger().info(
-                        'Face follow complete: '
-                        f'error_x={error_x:.3f}, '
-                        f'error_y={error_y:.3f}, '
-                        f'area_ratio={sample.area_ratio:.4f}')
-                    return 'centered'
-
-            previous_command = command
-            command = servo_target(
-                current_command=command,
-                reference=reference,
-                lower_limits=self.joint_lower_limits,
-                upper_limits=self.joint_upper_limits,
-                yaw_index=self.face_yaw_index,
-                pitch_index=self.face_pitch_index,
-                error_x=error_x,
-                error_y=error_y,
-                yaw_gain=self.face_center_gain,
-                pitch_gain=self.face_center_gain,
-                max_speed=self.face_servo_max_joint_speed,
-                dt=dt,
-                yaw_direction=self.face_yaw_direction,
-                pitch_direction=self.face_pitch_direction,
-                yaw_max_offset=self.face_yaw_max_offset,
-                pitch_max_offset=self.face_pitch_max_offset,
-                deadband=self.face_center_tolerance,
-                joint_margin=self.face_joint_margin,
-            )
-            command_velocity = [0.0] * len(self.joints)
-            if dt > 0.0:
-                command_velocity[self.face_yaw_index] = (
-                    command[self.face_yaw_index] -
-                    previous_command[self.face_yaw_index]) / dt
-                command_velocity[self.face_pitch_index] = (
-                    command[self.face_pitch_index] -
-                    previous_command[self.face_pitch_index]) / dt
-            self._publish_impedance_command(command, command_velocity)
-            next_tick += period
-            next_tick = max(next_tick, time.monotonic())
-            time.sleep(max(0.0, next_tick - time.monotonic()))
-
-        self.get_logger().warn('Face centering timed out; resuming scan')
-        return 'lost'
+            self.get_logger().warn('Face centering timed out; resuming scan')
+            return 'lost'
+        finally:
+            # Stop velocity feed-forward on every exit, including abort/error.
+            if rclpy.ok():
+                self._publish_impedance_command(command)
 
     def _run_face_tracking(self):
         """Scan for a nearby stable face, then center it in the RGB image."""
-        reference = self._positions_snapshot()
+        reference = self._face_positions_snapshot()
         if any(position is None for position in reference):
             self.get_logger().error(
                 'Lost /joint_states before starting face tracking')

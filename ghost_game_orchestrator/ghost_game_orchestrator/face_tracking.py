@@ -14,6 +14,9 @@ class FaceSample:
     image_width: int
     image_height: int
     score: float
+    source_age_at_receive: float = 0.0
+    source_stamp: float = 0.0
+    track_id: str = ''
 
     @property
     def area_ratio(self):
@@ -35,10 +38,11 @@ class FaceSample:
 
 def make_face_sample(
         received_at, center_x, center_y, width, height,
-        image_width, image_height, score):
+        image_width, image_height, score, source_age_at_receive=0.0,
+        source_stamp=0.0, track_id=''):
     values = (
         received_at, center_x, center_y, width, height,
-        image_width, image_height, score,
+        image_width, image_height, score, source_age_at_receive, source_stamp,
     )
     if any(not math.isfinite(float(value)) for value in values):
         raise ValueError('face sample values must be finite')
@@ -46,6 +50,8 @@ def make_face_sample(
         raise ValueError('face box dimensions must be positive')
     if image_width <= 0 or image_height <= 0:
         raise ValueError('image dimensions must be positive')
+    if source_age_at_receive < 0:
+        raise ValueError('source age cannot be negative')
     return FaceSample(
         received_at=float(received_at),
         center_x=float(center_x),
@@ -55,15 +61,18 @@ def make_face_sample(
         image_width=int(image_width),
         image_height=int(image_height),
         score=float(score),
+        source_age_at_receive=float(source_age_at_receive),
+        source_stamp=float(source_stamp),
+        track_id=str(track_id),
     )
 
 
 def face_is_acceptable(sample, now, max_age, min_area_ratio, max_area_ratio):
     if sample is None:
         return False
-    age = now - sample.received_at
+    age = now - sample.received_at + sample.source_age_at_receive
     return (
-        0.0 <= age <= max_age and
+        now >= sample.received_at and 0.0 <= age <= max_age and
         min_area_ratio <= sample.area_ratio <= max_area_ratio
     )
 
@@ -73,6 +82,8 @@ def face_matches_track(
         area_relative_jump_tolerance):
     """Reject a detector identity switch while visual servoing one face."""
     if previous is None or current is None:
+        return False
+    if previous.track_id and current.track_id and previous.track_id != current.track_id:
         return False
     center_jump = max(
         abs(current.error_x - previous.error_x),
@@ -118,6 +129,10 @@ class FaceStabilityGate:
             return False
 
         if self._reference is not None:
+            if (self._reference.track_id and sample.track_id and
+                    self._reference.track_id != sample.track_id):
+                self.reset()
+        if self._reference is not None:
             center_moved = max(
                 abs(sample.error_x - self._reference.error_x),
                 abs(sample.error_y - self._reference.error_y),
@@ -156,6 +171,67 @@ def scan_target(
         upper_limits[pitch_index] - joint_margin,
     )
     return target
+
+
+class SmoothFaceServo:
+    """Filter each observation once, bound acceleration and reference lead.
+
+    Joint/local hard limits and stopping on invalid input override smoothing.
+    This produces references for the existing MIT controller, not a robot model.
+    """
+    def __init__(self, cutoff_hz=6.0, max_acceleration=1.0, max_lead=.06):
+        if any(not math.isfinite(v) or v <= 0 for v in (cutoff_hz,max_acceleration,max_lead)):
+            raise ValueError('Servo smoothing settings must be positive and finite')
+        self.cutoff_hz,self.max_acceleration,self.max_lead = cutoff_hz,max_acceleration,max_lead
+        self.reset()
+
+    def reset(self):
+        self.key = None
+        self.sample_time = None
+        self.filtered = None
+        self.velocity = [0.,0.]
+
+    def step(self, sample, current_command, measured, dt, **options):
+        if dt <= 0:
+            return list(current_command), [0.]*len(current_command)
+        if (not math.isfinite(dt) or any(v is None or not math.isfinite(v) for v in measured+current_command)):
+            raise ValueError('Nonfinite joint feedback or control period')
+        key = (sample.source_stamp or sample.received_at, sample.track_id)
+        errors = [sample.error_x,sample.error_y]
+        observation_time = sample.received_at-sample.source_age_at_receive
+        if key != self.key:
+            if self.filtered is None or self.key[1] != key[1]:
+                self.filtered = errors
+            else:
+                elapsed = max(0.,observation_time-self.sample_time)
+                alpha = 1-math.exp(-2*math.pi*self.cutoff_hz*elapsed)
+                self.filtered = [old+alpha*(new-old) for old,new in zip(self.filtered,errors)]
+            self.key,self.sample_time = key,observation_time
+        # Continuous dead zone: there is no velocity jump at the threshold.
+        deadband = options.pop('deadband')
+        errors = [math.copysign(max(0.,abs(e)-deadband),e) for e in self.filtered]
+        proposed = servo_target(current_command=current_command,error_x=errors[0],
+                                error_y=errors[1],dt=dt,deadband=0.,**options)
+        output = list(current_command)
+        velocities = [0.]*len(output)
+        for axis,index in enumerate((options['yaw_index'],options['pitch_index'])):
+            desired = (proposed[index]-current_command[index])/dt
+            velocity = self.velocity[axis]+_clamp(desired-self.velocity[axis],
+                                                  -self.max_acceleration*dt,self.max_acceleration*dt)
+            limit = options['yaw_max_offset'] if axis==0 else options['pitch_max_offset']
+            margin = options.get('joint_margin',.05)
+            lower = max(options['lower_limits'][index]+margin,options['reference'][index]-limit)
+            upper = min(options['upper_limits'][index]-margin,options['reference'][index]+limit)
+            # If feedback lags, do not integrate farther away. Avoid a reference
+            # discontinuity when a measured joint moves outside the lead band.
+            lower = max(lower,min(current_command[index],measured[index]-self.max_lead))
+            upper = min(upper,max(current_command[index],measured[index]+self.max_lead))
+            if lower > upper:
+                raise ValueError('Empty servo limit interval')
+            output[index] = _clamp(current_command[index]+velocity*dt,lower,upper)
+            velocities[index] = (output[index]-current_command[index])/dt
+            self.velocity[axis] = velocities[index]
+        return output,velocities
 
 
 def servo_target(

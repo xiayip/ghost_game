@@ -81,6 +81,14 @@ def select_largest_face(faces, image_shape, score_threshold=0.70):
     depth measurement. Every frame is evaluated independently. Boxes are
     clipped to the actual image before comparison and publication.
     """
+    candidates = valid_face_boxes(faces, image_shape, score_threshold)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda box: (box.area, box.score, -box.x, -box.y))
+
+
+def valid_face_boxes(faces, image_shape, score_threshold=0.70):
+    """All validated boxes for association; preserve original clipping rules."""
     height, width = image_shape[:2]
     candidates = []
     for face in [] if faces is None else faces:
@@ -102,8 +110,4 @@ def select_largest_face(faces, image_shape, score_threshold=0.70):
             x=left, y=top, width=right - left, height=bottom - top,
             score=score))
 
-    if not candidates:
-        return None
-    return max(
-        candidates,
-        key=lambda box: (box.area, box.score, -box.x, -box.y))
+    return candidates

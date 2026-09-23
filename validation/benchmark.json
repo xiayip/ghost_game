@@ -1,0 +1,118 @@
+{
+  "note": "Actual old/new detector methods + real CPU YuNet. ROS messages are stand-ins; DDS queue is emulated. Public static two-face fixture. No camera, ROS, robot, or true motion latency. Baseline/new use their 15/30 Hz settings and JPEG debug; extra 80 ms is artificial stress, not measured Spark load.",
+  "opencv": "4.10.0",
+  "threads": 12,
+  "baseline_commit": "961fab056aae235cb5d26f6a13bb6c2e2ed30b63",
+  "cases": [
+    {
+      "kind": "baseline",
+      "synthetic_extra_inference_ms": 0,
+      "capture_hz": 30.0,
+      "measured_seconds": 5.0,
+      "source_size": [
+        848,
+        530
+      ],
+      "detector_size": [
+        424,
+        265
+      ],
+      "source_frames": 180,
+      "valid_hz": 14.8,
+      "valid_source_age_ms": {
+        "p50": 21.703,
+        "p95": 60.101,
+        "max": 63.636
+      },
+      "valid_arrival_intervals_ms": {
+        "p50": 63.295,
+        "p95": 98.781,
+        "max": 119.157
+      },
+      "observed_invalid_messages": 0
+    },
+    {
+      "kind": "latest",
+      "synthetic_extra_inference_ms": 0,
+      "capture_hz": 30.0,
+      "measured_seconds": 5.0,
+      "source_size": [
+        848,
+        530
+      ],
+      "detector_size": [
+        424,
+        265
+      ],
+      "source_frames": 180,
+      "valid_hz": 29.8,
+      "valid_source_age_ms": {
+        "p50": 13.218,
+        "p95": 53.04,
+        "max": 72.178
+      },
+      "valid_arrival_intervals_ms": {
+        "p50": 32.163,
+        "p95": 69.329,
+        "max": 93.943
+      },
+      "observed_invalid_messages": 0,
+      "pending_overwrites": 1
+    },
+    {
+      "kind": "baseline",
+      "synthetic_extra_inference_ms": 80,
+      "capture_hz": 30.0,
+      "measured_seconds": 5.0,
+      "source_size": [
+        848,
+        530
+      ],
+      "detector_size": [
+        424,
+        265
+      ],
+      "source_frames": 180,
+      "valid_hz": 9.8,
+      "valid_source_age_ms": {
+        "p50": 246.701,
+        "p95": 264.541,
+        "max": 271.107
+      },
+      "valid_arrival_intervals_ms": {
+        "p50": 99.052,
+        "p95": 118.301,
+        "max": 135.83
+      },
+      "observed_invalid_messages": 0
+    },
+    {
+      "kind": "latest",
+      "synthetic_extra_inference_ms": 80,
+      "capture_hz": 30.0,
+      "measured_seconds": 5.0,
+      "source_size": [
+        848,
+        530
+      ],
+      "detector_size": [
+        424,
+        265
+      ],
+      "source_frames": 180,
+      "valid_hz": 10.2,
+      "valid_source_age_ms": {
+        "p50": 112.241,
+        "p95": 135.008,
+        "max": 149.727
+      },
+      "valid_arrival_intervals_ms": {
+        "p50": 93.588,
+        "p95": 116.407,
+        "max": 129.239
+      },
+      "observed_invalid_messages": 0,
+      "pending_overwrites": 117
+    }
+  ]
+}

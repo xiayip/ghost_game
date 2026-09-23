@@ -111,14 +111,16 @@ ghost_game_node:
     # phase so old frames cannot trigger a move. The expanded full-head bbox
     # must cover at least 1.5% of the RGB image to reject distant visitors.
     enable_face_tracking: true
-    face_detection_topic: /nearest_face/detection
+    face_detection_topic: /nearest_face/tracking
     face_camera_info_topic: /camera/color/camera_info
-    face_detection_max_age: 1.0
-    face_min_bbox_area_ratio: 0.015
+    # Total age from source RGB stamp, not from callback arrival.
+    face_detection_max_age: 0.15
+    # Unexpanded face area: roughly the previous 1.5% head-crop threshold.
+    face_min_bbox_area_ratio: 0.005
     face_max_bbox_area_ratio: 0.65
-    # At 30 Hz this requires roughly ten consecutive frames. Identity-jump
+    # At 30 Hz this requires roughly seven observations. Identity-jump
     # rejection remains active after acquisition.
-    face_stable_time: 0.30
+    face_stable_time: 0.20
     face_stability_center_tolerance: 0.08
     face_stability_area_relative_tolerance: 0.35
 
@@ -171,7 +173,13 @@ ghost_game_node:
     face_servo_max_joint_speed: 0.70 # rad/s; scan keeps its separate 0.25 limit
     # Freeze immediately when the detector stops refreshing, while allowing
     # face_target_lost_timeout for reacquisition before resuming the scan.
-    face_servo_detection_timeout: 0.20
+    face_servo_detection_timeout: 0.15
+    face_servo_acceleration: 1.0    # rad/s^2 reference acceleration
+    face_filter_cutoff_hz: 6.0     # applied once per new observation
+    face_max_command_lead: 0.06    # rad, prevents integrating far ahead of feedback
+    face_joint_feedback_timeout: 0.20
+    # Opt in via launch for continuous following instead of completing Stage 2.
+    face_continuous_follow: false
     face_center_tolerance: 0.08      # normalized by image half-width/height
     # Once dwell begins, tolerate small detector jitter without restarting it.
     face_center_release_tolerance: 0.12
