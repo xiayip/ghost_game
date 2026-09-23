@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -25,6 +26,9 @@ def generate_launch_description():
     web_mesh_model_path = LaunchConfiguration("web_mesh_model_path")
     web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
     enable_tts = LaunchConfiguration("enable_tts")
+    enable_gestures = LaunchConfiguration("enable_gestures")
+    gesture_model_path = LaunchConfiguration("gesture_model_path")
+    gesture_dry_run = LaunchConfiguration("gesture_dry_run")
     tts_config = LaunchConfiguration("tts_config")
     tts_backend = LaunchConfiguration("tts_backend")
     tts_model = LaunchConfiguration("tts_model")
@@ -118,6 +122,18 @@ def generate_launch_description():
                 description="TTS backend: auto, piper (offline), or doubao (cloud)",
             ),
             DeclareLaunchArgument(
+                "enable_gestures", default_value="false",
+                description="Start hand gesture labels and the dry-run interaction router",
+            ),
+            DeclareLaunchArgument(
+                "gesture_model_path",
+                default_value=str(Path.home() / ".local/share/ghost_game/gesture_recognizer.task"),
+            ),
+            DeclareLaunchArgument(
+                "gesture_dry_run", default_value="true",
+                description="Publish interaction requests without calling robot services",
+            ),
+            DeclareLaunchArgument(
                 "tts_config",
                 default_value=PathJoinSubstitution(
                     [FindPackageShare("ghost_tts"), "config", "ghost.yaml"]
@@ -187,6 +203,19 @@ def generate_launch_description():
                     {"model_path": face_detection_model_path},
                 ],
                 condition=IfCondition(enable_face_detection),
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution([
+                        FindPackageShare("ghost_game_gestures"), "launch", "gestures.launch.py"
+                    ])
+                ),
+                launch_arguments={
+                    "model_path": gesture_model_path,
+                    "enable_action_router": "true",
+                    "dry_run": gesture_dry_run,
+                }.items(),
+                condition=IfCondition(enable_gestures),
             ),
             Node(
                 package="flux_image_editor",

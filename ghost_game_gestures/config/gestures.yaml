@@ -1,0 +1,37 @@
+gesture_recognition:
+  ros__parameters:
+    # Subscribe to the existing Orbbec RGB stream. Never open a second camera.
+    image_topic: /camera/color/image_raw/compressed
+    image_transport: compressed
+    model_path: ~/.local/share/ghost_game/gesture_recognizer.task
+    num_hands: 2
+    max_width: 640
+    max_processing_rate: 20.0
+    max_frame_age: 0.20
+    watchdog_timeout: 0.25
+    publish_rate: 60.0
+    min_detection_confidence: 0.5
+    min_presence_confidence: 0.5
+    min_tracking_confidence: 0.5
+    score_threshold: 0.65
+    hold_seconds: 0.35
+    release_seconds: 0.25
+    cooldown_seconds: 1.5
+    max_gap: 0.25
+    move_deadzone: 0.06
+    move_scale: 0.25
+    state_topic: /gestures/state
+    events_topic: /gestures/events
+    palm_control_topic: /gestures/palm_control
+gesture_action_router:
+  ros__parameters:
+    dry_run: true
+    events_topic: /gestures/events
+    requests_topic: /interaction/requests
+    status_topic: /interaction/status
+    routes_json: '{"open_palm":"palm_follow","handshake_offer":"handshake","closed_fist":"fist","fist_bump_offer":"fist_bump","pointing":"point_at","wave":"wave","thumb_up":"acknowledge"}'
+    service_map_json: '{}'
+    event_max_age: 0.25
+    min_score: 0.65
+    cooldown_seconds: 1.5
+    service_timeout: 15.0
