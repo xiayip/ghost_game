@@ -1,9 +1,22 @@
 ghost_tts:
   ros__parameters:
+    # auto selects Doubao only when all three DOUBAO_TTS_* variables are set,
+    # otherwise it keeps the show audible with local Piper. Explicit piper or
+    # doubao remains available for strict selection.
+    backend: auto
     preset: ghost
     effect_strength: 0.7
     volume: 0.7
+    apply_effects: true
     length_scale: 1.08
+    doubao_endpoint: https://openspeech.bytedance.com/api/v3/tts/unidirectional/sse
+    # ICL 2.0 defaults to the standard model. The expressive model can be
+    # selected here when the cloned voice supports it.
+    doubao_model: seed-tts-2.0-standard
+    doubao_sample_rate: 24000
+    doubao_speech_rate: 0
+    doubao_loudness_rate: 0
+    doubao_timeout_seconds: 60.0
     # The show speaker is owned by the host PipeWire/PulseAudio session.
     # The devcontainer mounts its native socket and libpulse routes to the
     # current host default sink (Bluetooth MS-PS1CN during commissioning).

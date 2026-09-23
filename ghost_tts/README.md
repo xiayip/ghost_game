@@ -1,9 +1,10 @@
 # ghost_tts
 
-`ghost_tts` is the offline Chinese voice output for Ghost Game. It uses a
-Piper CPU model, applies a selectable electronic voice effect, and plays on
-the host running the node. Text jobs are bounded, queued in order, and exposed
-as cancellable ROS 2 Actions without blocking the robot control executor.
+`ghost_tts` is the switchable Chinese voice output for Ghost Game. The
+`piper` backend runs fully offline on CPU; the `doubao` backend calls the
+Volcengine Doubao Voice V3 API. Both backends use the same electronic effects,
+audio output, bounded queue, and cancellable ROS 2 Action without blocking the
+robot control executor.
 
 The unified application launch starts this package automatically:
 
@@ -44,6 +45,37 @@ ros2 topic pub --once /ghost/tts/text std_msgs/msg/String \
   "{data: '系统已苏醒。意识端口已经接入。'}"
 ros2 service call /ghost/tts/stop std_srvs/srv/Trigger '{}'
 ```
+
+To use the cloned Doubao voice, export its credentials in the same terminal
+that starts ROS. The default `auto` backend then selects Doubao:
+
+```bash
+export DOUBAO_TTS_API_KEY='<API key from the Doubao Voice console>'
+export DOUBAO_TTS_VOICE_TYPE='<S_... cloned voice ID>'
+export DOUBAO_TTS_RESOURCE_ID='seed-icl-2.0'
+
+ros2 launch ghost_tts ghost_tts.launch.py \
+  backend:=auto preset:=ghost audio_device:=pulse
+```
+
+The API key is read directly from the process environment and is never stored
+in ROS parameters, YAML, status topics, or logs. `DOUBAO_TTS_VOICE_TYPE` and
+`DOUBAO_TTS_RESOURCE_ID` are also required when `backend:=doubao`. The default
+request uses the ICL 2.0 standard model, mono 16-bit PCM at 24 kHz, and the
+official V3 SSE endpoint. Tune `doubao_model`, `doubao_speech_rate`,
+`doubao_loudness_rate`, and `doubao_timeout_seconds` in `config/ghost.yaml`.
+Set `apply_effects: false` there to keep the cloud voice unprocessed while
+still applying the configured output `volume`.
+
+The unified launch uses `tts_backend:=auto` by default:
+
+```bash
+ros2 launch ghost_game ghost_game.launch.py tts_backend:=auto
+```
+
+`backend:=auto` falls back to Piper when any required variable is absent, so a
+missed export cannot silence the show. Explicit `backend:=doubao` fails closed
+with a clear initialization error instead of silently using another voice.
 
 Available effect presets are `clean`, `subtle`, `ghost`, and `machine`.
 `audio_device:=pulse` sends audio to the host PipeWire/PulseAudio default

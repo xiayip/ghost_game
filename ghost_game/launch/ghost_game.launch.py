@@ -24,6 +24,7 @@ def generate_launch_description():
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
     enable_tts = LaunchConfiguration("enable_tts")
     tts_config = LaunchConfiguration("tts_config")
+    tts_backend = LaunchConfiguration("tts_backend")
     tts_model = LaunchConfiguration("tts_model")
     tts_preset = LaunchConfiguration("tts_preset")
     tts_audio_device = LaunchConfiguration("tts_audio_device")
@@ -94,7 +95,12 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "enable_tts",
                 default_value="true",
-                description="Start offline Piper TTS and enable game announcements",
+                description="Start the selected TTS backend and enable announcements",
+            ),
+            DeclareLaunchArgument(
+                "tts_backend",
+                default_value="piper",
+                description="TTS backend: auto, piper (offline), or doubao (cloud)",
             ),
             DeclareLaunchArgument(
                 "tts_config",
@@ -146,6 +152,7 @@ def generate_launch_description():
                 parameters=[
                     tts_config,
                     {
+                        "backend": ParameterValue(tts_backend, value_type=str),
                         "model_path": ParameterValue(tts_model, value_type=str),
                         "preset": ParameterValue(tts_preset, value_type=str),
                         "audio_device": ParameterValue(

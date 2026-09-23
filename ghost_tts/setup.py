@@ -9,5 +9,5 @@ setup(name='ghost_tts',version='0.2.0',packages=find_packages(),python_requires=
                 ('share/ghost_tts/launch',glob('launch/*.launch.py'))],
     install_requires=['setuptools'],zip_safe=False,
     maintainer='nvidia',maintainer_email='yipeng.xia@hotmail.com',
-    description='Offline cyberpunk TTS for ROS2 Jazzy',license='MIT',tests_require=['pytest'],
+    description='Switchable Piper/Doubao cyberpunk TTS for ROS2 Jazzy',license='MIT',tests_require=['pytest'],
     entry_points={'console_scripts':['ghost_tts_node=ghost_tts.node:main','ghost_tts_preview=ghost_tts.preview:main']})

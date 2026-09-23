@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>ghost_tts</name><version>0.2.0</version>
-  <description>Offline queued Chinese TTS with cyberpunk electronic effects for ROS2 Jazzy.</description>
+  <description>Switchable Piper/Doubao Chinese TTS with cyberpunk effects for ROS2 Jazzy.</description>
   <maintainer email="yipeng.xia@hotmail.com">nvidia</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_python</buildtool_depend>
@@ -10,6 +10,7 @@
   <exec_depend>ghost_game_interfaces</exec_depend>
   <exec_depend>ament_index_python</exec_depend><exec_depend>launch</exec_depend><exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-requests</exec_depend>
   <exec_depend>libpulse0</exec_depend>
   <test_depend>python3-pytest</test_depend>
   <export><build_type>ament_python</build_type></export>
