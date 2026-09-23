@@ -18,13 +18,20 @@ see /robot/robot.urdf and /robot/pkg/<package>/<relpath> below.
 Also proxies nearest_face's annotated compressed stream (sensor_msgs/
 CompressedImage, JPEG) so the dashboard shows the selected face bounding box
 - see /api/camera.jpg below.
+
+The same bridge subscribes to the plain-text command sent to ghost_tts and
+exposes the latest caption as JSON.  The browser therefore shows exactly the
+line the voice worker receives, without duplicating the game's stage script.
 """
 
 import functools
 import http.server
+import json
 import mimetypes
 import os
+import queue
 import threading
+import time
 from pathlib import Path
 
 import rclpy
@@ -32,6 +39,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 
@@ -111,6 +119,110 @@ class _CameraStore:
             return self._jpeg
 
 
+class _TtsStore:
+    """Thread-safe latest-value store for the web voice-caption endpoint."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._text = ''
+        self._sequence = 0
+        self._received_at = None
+
+    def set(self, text):
+        text = text.strip()
+        if not text:
+            return
+        with self._lock:
+            self._text = text
+            self._sequence += 1
+            self._received_at = time.time()
+
+    def get_json(self):
+        with self._lock:
+            payload = {
+                'text': self._text,
+                'sequence': self._sequence,
+                'received_at': self._received_at,
+            }
+        return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+
+
+class _ControlCall:
+    """One HTTP request waiting for its ROS Trigger service response."""
+
+    def __init__(self, command):
+        self.command = command
+        self.event = threading.Event()
+        self._lock = threading.Lock()
+        self._expired = False
+        self.status = 500
+        self.payload = None
+
+    def finish(self, status, ok, message):
+        with self._lock:
+            if self._expired:
+                return
+            self.status = status
+            self.payload = {
+                'ok': bool(ok),
+                'command': self.command,
+                'message': str(message),
+            }
+            self.event.set()
+
+    def expire(self):
+        with self._lock:
+            if self.event.is_set():
+                return False
+            self._expired = True
+            return True
+
+    @property
+    def expired(self):
+        with self._lock:
+            return self._expired
+
+
+class _ControlBridge:
+    """Bounded handoff from HTTP server threads to the ROS executor thread."""
+
+    COMMANDS = frozenset(('start', 'abort', 'return_home', 'mock_solve'))
+
+    def __init__(self, max_pending=8):
+        self._pending = queue.Queue(maxsize=max_pending)
+
+    def request(self, command, timeout=6.0):
+        if command not in self.COMMANDS:
+            return 404, {
+                'ok': False,
+                'command': command,
+                'message': 'Unknown control command',
+            }
+        call = _ControlCall(command)
+        try:
+            self._pending.put_nowait(call)
+        except queue.Full:
+            return 429, {
+                'ok': False,
+                'command': command,
+                'message': 'Control queue is busy',
+            }
+        if not call.event.wait(timeout):
+            call.expire()
+            return 504, {
+                'ok': False,
+                'command': command,
+                'message': 'ROS service response timed out',
+            }
+        return call.status, call.payload
+
+    def take_nowait(self):
+        return self._pending.get_nowait()
+
+    def take(self, timeout=None):
+        return self._pending.get(timeout=timeout)
+
+
 class _ThreadingHTTPServer(http.server.ThreadingHTTPServer):
     # Default request_queue_size (5) drops/resets connections when the
     # browser fires ~30 concurrent mesh fetches at page load (surfaces as
@@ -121,6 +233,8 @@ class _ThreadingHTTPServer(http.server.ThreadingHTTPServer):
 class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     state_store: _StateStore = None    # bound by GhostGameWebMonitor before serving
     camera_store: _CameraStore = None  # bound by GhostGameWebMonitor before serving
+    tts_store: _TtsStore = None        # bound by GhostGameWebMonitor before serving
+    control_bridge: _ControlBridge = None
     urdf_text: str = None              # expanded URDF XML, or None if unavailable
     protocol_version = 'HTTP/1.1'    # keep-alive, so ~30 mesh fetches don't need 30 fresh sockets
 
@@ -132,8 +246,8 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         super().end_headers()
 
-    def _send_bytes(self, body, content_type):
-        self.send_response(200)
+    def _send_bytes(self, body, content_type, status=200):
+        self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -145,6 +259,10 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path in ('/api/state', '/api/state/'):
             self._send_bytes(self.state_store.get().encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/tts', '/api/tts/'):
+            payload = self.tts_store.get_json() if self.tts_store else '{}'
+            self._send_bytes(payload.encode('utf-8'), 'application/json; charset=utf-8')
             return
         if path in ('/api/camera.jpg', '/api/camera.jpg/'):
             jpeg_bytes = self.camera_store.get() if self.camera_store else None
@@ -171,6 +289,18 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_POST(self):
+        path = self.path.split('?', 1)[0].rstrip('/')
+        prefix = '/api/control/'
+        if not path.startswith(prefix) or self.control_bridge is None:
+            self.send_error(404, 'Control endpoint not found')
+            return
+        command = path[len(prefix):]
+        status, payload = self.control_bridge.request(command)
+        body = json.dumps(
+            payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        self._send_bytes(body, 'application/json; charset=utf-8', status=status)
+
     def log_message(self, format_str, *args):
         pass  # quiet - the ROS logger already announces startup; polling would flood stdout
 
@@ -180,6 +310,13 @@ class GhostGameWebMonitor(Node):
     def __init__(self):
         super().__init__('ghost_game_web_monitor')
         self.declare_parameter('state_topic', '/ghost_game_node/state')
+        self.declare_parameter('tts_text_topic', '/ghost/tts/text')
+        self.declare_parameter('start_service', '/ghost_game_node/start')
+        self.declare_parameter('abort_service', '/ghost_game_node/abort')
+        self.declare_parameter(
+            'return_home_service', '/ghost_game_node/return_home')
+        self.declare_parameter(
+            'mock_solve_service', '/ghost_game_node/mock_solve')
         self.declare_parameter('port', 8765)
         self.declare_parameter('enable_robot_model', True)
         self.declare_parameter('robot_description_package', 'zephyr_arm_description')
@@ -194,6 +331,23 @@ class GhostGameWebMonitor(Node):
         self._store = _StateStore()
         self.create_subscription(String, state_topic, self._on_state, 10)
 
+        self._tts_store = _TtsStore()
+        tts_text_topic = self.get_parameter('tts_text_topic').value
+        self.create_subscription(String, tts_text_topic, self._on_tts_text, 10)
+
+        self._control_bridge = _ControlBridge()
+        self._control_clients = {
+            'start': self.create_client(
+                Trigger, self.get_parameter('start_service').value),
+            'abort': self.create_client(
+                Trigger, self.get_parameter('abort_service').value),
+            'return_home': self.create_client(
+                Trigger, self.get_parameter('return_home_service').value),
+            'mock_solve': self.create_client(
+                Trigger, self.get_parameter('mock_solve_service').value),
+        }
+        self._control_timer = self.create_timer(0.05, self._dispatch_controls)
+
         self._camera_store = _CameraStore()
         camera_topic = self.get_parameter('camera_topic').value
         if self.get_parameter('enable_camera').value:
@@ -203,6 +357,8 @@ class GhostGameWebMonitor(Node):
         web_dir = get_package_share_directory('ghost_game_orchestrator') + '/web'
         _StateHTTPRequestHandler.state_store = self._store
         _StateHTTPRequestHandler.camera_store = self._camera_store
+        _StateHTTPRequestHandler.tts_store = self._tts_store
+        _StateHTTPRequestHandler.control_bridge = self._control_bridge
         if self.get_parameter('enable_robot_model').value:
             _StateHTTPRequestHandler.urdf_text = _expand_urdf(
                 self.get_parameter('robot_description_package').value,
@@ -216,13 +372,51 @@ class GhostGameWebMonitor(Node):
 
         model_status = 'loaded' if _StateHTTPRequestHandler.urdf_text else 'unavailable (skeleton fallback)'
         self.get_logger().info(
-            f'Ghost game dashboard: http://localhost:{port}  (watching {state_topic}, robot model {model_status})')
+            f'Ghost game dashboard: http://localhost:{port}  '
+            f'(watching {state_topic} and {tts_text_topic}, robot model {model_status})')
 
     def _on_state(self, msg: String):
         self._store.set(msg.data)
 
     def _on_camera(self, msg: CompressedImage):
         self._camera_store.set(bytes(msg.data))
+
+    def _on_tts_text(self, msg: String):
+        self._tts_store.set(msg.data)
+
+    def _dispatch_controls(self):
+        for _ in range(8):
+            try:
+                call = self._control_bridge.take_nowait()
+            except queue.Empty:
+                return
+            if call.expired:
+                continue
+            client = self._control_clients[call.command]
+            if not client.service_is_ready():
+                call.finish(
+                    503, False,
+                    f'ROS service for {call.command} is unavailable')
+                continue
+            future = client.call_async(Trigger.Request())
+            future.add_done_callback(
+                lambda completed, pending=call:
+                self._finish_control(pending, completed))
+
+    def _finish_control(self, call, future):
+        try:
+            response = future.result()
+        except Exception as error:  # noqa: BLE001 - return ROS failure to UI
+            call.finish(502, False, f'ROS service call failed: {error}')
+            return
+        if response is None:
+            call.finish(502, False, 'ROS service returned no response')
+            return
+        call.finish(
+            200 if response.success else 409,
+            response.success,
+            response.message,
+        )
 
     def destroy_node(self):
         self._httpd.shutdown()

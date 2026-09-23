@@ -172,16 +172,29 @@ source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 # Cyberpunk web dashboard (styled after zephyr_robot_design_system) - open
 # the printed URL (http://localhost:8765 by default) in a browser. J1-J6
 # progress bars (updated at 20 Hz) plus a live 3D model of the real arm
-# pose next to them - good for an audience-facing screen. Needs internet at
+# pose next to them. A phase-driven bilingual mission panel narrates shell
+# infiltration, fragment recovery, visual acquisition, and awakening; each
+# joint is presented as a recoverable GHOST FRAGMENT. The GHOST VOICE_LINK
+# panel subscribes to the same
+# /ghost/tts/text commands as the speaker and shows the latest line with a
+# cyber-pixel subtitle treatment. The operator console calls the existing
+# start, abort, and return_home Trigger services and displays the ROS result
+# in place. A deliberately low-visibility `mu` developer button in the
+# console heading calls `mock_solve` during the searching phase - good for an
+# audience-facing screen without exposing the demo shortcut prominently.
+# Needs internet at
 # the venue (three.js/urdf-loader load from a CDN); the progress bars
-# themselves have no such dependency and keep working offline.
+# and subtitle panel themselves have no such dependency and keep working
+# offline, using their system-font fallbacks.
 ros2 run ghost_game_orchestrator ghost_game_web_monitor
 
 # Or the plain-text terminal table instead:
 ros2 run ghost_game_orchestrator ghost_game_monitor
 ```
-Both just render `~/state`; neither ever displays `targets` even if the topic
-carries it (`debug_reveal_targets`) - the dashboard only reads `progress`.
+Both render `~/state`; the web monitor also consumes `/ghost/tts/text` and
+serves its latest caption at `/api/tts`. Neither ever displays `targets` even
+if the state topic carries it (`debug_reveal_targets`) - the dashboard only
+reads `progress`.
 
 **Terminal 4 - control commands** (start a round, abort, or send the arm
 home):

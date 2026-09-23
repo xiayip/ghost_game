@@ -59,7 +59,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "enable_web_monitor",
-                default_value="false",
+                default_value="true",
                 description="Start the optional web dashboard on port 8765",
             ),
             DeclareLaunchArgument(

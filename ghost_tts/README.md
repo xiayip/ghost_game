@@ -41,6 +41,18 @@ speaker. The devcontainer mounts `/run/user/1000/pulse` and sets
 `PULSE_SERVER` for this route. After changing `.devcontainer/devcontainer.json`,
 recreate the container once so the mount is active.
 
+An already-created host-network container cannot gain that bind mount through
+`docker restart`. For that legacy container, restore the loopback bridge from
+a **host** terminal without restarting ROS:
+
+```bash
+pactl load-module module-native-protocol-tcp \
+  listen=127.0.0.1 auth-ip-acl=127.0.0.1
+```
+
+The listener is restricted to host loopback. Recreate the devcontainer when
+convenient to use the Unix socket route and remove this compatibility step.
+
 For a direct ALSA/PortAudio device instead, pass its name or index and list
 available outputs with:
 
