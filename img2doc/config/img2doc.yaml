@@ -13,7 +13,10 @@ img2doc:
     request_timeout_sec: 120.0
     max_retries: 2
     retry_interval_sec: 1.0
-    max_tokens: 600
+    # 600 caused deepseek-flash to stop with finish_reason=length midway
+    # through the introduction string. The client also doubles this once
+    # automatically if a response is still truncated.
+    max_tokens: 1200
     temperature: 0.2
 
     max_long_edge: 1300
@@ -37,7 +40,7 @@ img2doc:
 
       角色外观性别只描述虚构角色在图片中呈现的外观，必须是“男”“女”“未知”之一；无法可靠判断时使用“未知”。义体等级参照赛博朋克题材并严格从以下等级中选择：C0 原生级（没有可见义体）；C1 辅助级（少量接口、电子镜片或辅助装备）；C2 增强级（多处可见植入，强化感知或行动）；C3 战术级（明显战斗、侦察或网络入侵义体）；C4 深度义体化（头部或身体存在大面积机械结构）；C5 全身义体（身体主体为机械）。
 
-      文本要求：character_name 为 2 至 8 个中文字符组成的虚构角色代号或称号，不能使用“林澈”“张伟”这类真实姓名形式；codename 为 3 至 8 位纯数字字符串，可包含前导零，例如“007”“1042”，不得包含字母、空格、NO、井号或连字符；role 不超过 16 个中文字符；introduction 为 50 至 90 个中文字符的简短角色介绍。
+      文本要求：character_name 为 2 至 8 个中文字符组成的虚构角色代号或称号，不能使用“林澈”“张伟”这类真实姓名形式, 需要符合攻壳机动队主题；codename 为 3 至 8 位纯数字字符串，可包含前导零，例如“007”“1042”，不得包含字母、空格、NO、井号或连字符；role 不超过 16 个中文字符；introduction 为 50 至 90 个中文字符的简短角色介绍。
 
       仅返回如下结构的 json 对象，字段名不得更改：
       {

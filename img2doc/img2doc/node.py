@@ -38,7 +38,7 @@ class Img2DocNode(Node):
             "request_timeout_sec": 120.0,
             "max_retries": 2,
             "retry_interval_sec": 1.0,
-            "max_tokens": 600,
+            "max_tokens": 1200,
             "temperature": 0.2,
             "max_long_edge": 1300,
             "jpeg_quality": 90,

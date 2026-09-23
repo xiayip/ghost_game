@@ -99,6 +99,20 @@ class DeepSeekVisionClient:
                     data = response.json()
                     choice = data["choices"][0]
                     content = choice["message"]["content"]
+                    finish_reason = str(choice.get("finish_reason") or "")
+                    if finish_reason == "length":
+                        last_error = (
+                            "DeepSeek 输出达到 token 上限，JSON 可能被截断"
+                        )
+                        if attempt >= self._max_retries:
+                            raise DeepSeekError(last_error)
+                        # A vision model may spend part of the completion
+                        # budget on internal reasoning. Retry only truncated
+                        # responses, with enough room to close the JSON.
+                        current_limit = int(payload["max_tokens"])
+                        payload["max_tokens"] = min(
+                            max(current_limit * 2, current_limit + 512), 4096)
+                        continue
                     if not isinstance(content, str) or not content.strip():
                         last_error = "DeepSeek 返回了空内容"
                         if attempt >= self._max_retries:
@@ -107,7 +121,7 @@ class DeepSeekVisionClient:
                         return DeepSeekResponse(
                             content=content,
                             model=str(data.get("model") or self._model),
-                            finish_reason=str(choice.get("finish_reason") or ""),
+                            finish_reason=finish_reason,
                             usage=data.get("usage") or {},
                             elapsed_sec=time.monotonic() - started,
                         )

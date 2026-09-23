@@ -965,8 +965,8 @@ header {
   right: calc(var(--profile-width) + 22px);
   bottom: auto;
   left: auto;
-  width: min(32%, 330px);
-  height: min(48%, 300px);
+  width: min(16%, 165px);
+  height: min(24%, 150px);
   z-index: 6;
   object-fit: contain;
   overflow: hidden;
@@ -1476,8 +1476,8 @@ header {
   .mesh-panel.model-ready.portrait-ready .mesh-portrait {
     top: 18px;
     right: 18px;
-    width: min(44%, 250px);
-    height: min(38%, 210px);
+    width: min(22%, 125px);
+    height: min(19%, 105px);
   }
   .mesh-panel.model-ready.portrait-ready .mesh-portrait-label {
     top: 24px;

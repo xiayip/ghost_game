@@ -129,7 +129,7 @@ ros2 service call /ghost/profile/submit std_srvs/srv/Trigger '{}'
 | `input_transient_local` | `true` | 重启后接收 FLUX 缓存的本轮画像 |
 | `request_timeout_sec` | `120.0` | 单次 HTTP 超时 |
 | `max_retries` | `2` | 空响应、网络错误、429 或 5xx 的重试上限 |
-| `max_tokens` | `600` | 文本输出 token 上限 |
+| `max_tokens` | `1200` | 文本输出上限；若被截断会自动加倍重试 |
 | `temperature` | `0.2` | 降低格式与内容波动 |
 | `auto_submit` | `true` | 收到每轮 FLUX 画像后自动建档 |
 | `auto_interval_sec` | `1.0` | 自动模式的重复保护间隔 |
