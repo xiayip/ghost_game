@@ -1,0 +1,3 @@
+# Copy to local_api.yaml and enter your own key. Never commit the local file.
+tripo:
+  api_key: ''

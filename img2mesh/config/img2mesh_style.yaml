@@ -1,0 +1,5 @@
+# Overrides applied only by img2mesh_style.launch.py.
+img2mesh:
+  ros__parameters:
+    style_enabled: true
+    auto_submit: true

@@ -1,0 +1,38 @@
+img2mesh:
+  ros__parameters:
+    # FLUX publishes one reconstruction-ready portrait for each captured face.
+    image_topic: /ghost/reconstruction/image
+    style_prompt_topic: /img2mesh/style_prompt
+    result_topic: /ghost/reconstruction/mesh_result
+    status_topic: /ghost/reconstruction/mesh_status
+    model_url_topic: /ghost/reconstruction/model_url
+    submit_service: /ghost/reconstruction/mesh_submit
+
+    mode: single
+    api_base_url: https://openapi.tripo3d.ai/v3
+    model: P1-20260311
+    face_limit: 8000
+    texture: true
+    pbr: true
+    quad: false
+
+    # /ghost/reconstruction/image emits once when FLUX succeeds. Each new
+    # image starts one Tripo task; continuous camera frames never reach here.
+    auto_submit: true
+    auto_interval_sec: 1.0
+    log_each_image: false
+
+    # Styling already happened in flux_image_editor.
+    style_enabled: false
+    style_server_url: http://127.0.0.1:8090
+    style_request_timeout_sec: 600.0
+    style_save_output: false
+    style_output_directory: ~/img2mesh_style_outputs
+
+    poll_interval_sec: 3.0
+    request_timeout_sec: 20.0
+    task_timeout_sec: 900.0
+
+    test_mode: false
+    test_image_path: ''
+    test_exit_on_complete: true

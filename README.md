@@ -1,18 +1,20 @@
 # Ghost Game
 
-This repository is split into six ROS 2 packages with one-way ownership:
+This repository is split into seven ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
 | --- | --- |
 | `ghost_game` | Meta package, unified launch, and the YuNet model assets used by the application. It contains no runtime Python logic. |
-| `ghost_game_interfaces` | Shared ROS 2 interfaces, including the cancellable `Speak` action. |
+| `ghost_game_interfaces` | Shared ROS 2 interfaces, including the cancellable `Speak` action and detailed `MeshResult` progress message. |
 | `ghost_game_face_detection` | RGB image input, nearest-face selection, `vision_msgs` bbox output, and annotated debug images. It does not know the game state. |
 | `ghost_game_orchestrator` | Game state machine, controller/gripper coordination, success flow, and terminal/web monitors. It does not implement face detection. |
 | `ghost_tts` | Switchable offline Piper or cloud Doubao speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
-| `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its output is the prepared image input for a later image-to-3D node. |
+| `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its prepared output feeds `img2mesh`. |
+| `img2mesh` | Uploads each prepared portrait to Tripo, tracks generation progress, and publishes the completed signed GLB URL to the Web bridge. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
-ghost_game_face_detection, ghost_tts, flux_image_editor, ghost_game_interfaces}`.
+ghost_game_face_detection, ghost_tts, flux_image_editor, img2mesh,
+ghost_game_interfaces}`.
 Runtime packages share only the interface package and communicate over ROS.
 
 "Find the Ghost" arm interaction demo. The arm silently picks 6 secret joint
@@ -49,8 +51,11 @@ the prompt without blocking arm motion. The edited image is published on
 `/ghost/reconstruction/image` and its exact PNG bytes on
 `/ghost/reconstruction/image_png`; JSON progress and the saved path appear on
 `/ghost/reconstruction/status` and inside the orchestrator state as
-`reconstruction`. This stage prepares an image for 3D reconstruction; the
-actual mesh generator is a separate future `img2mesh`/Tripo node.
+`reconstruction`. `img2mesh` consumes each completed FLUX image, starts one
+Tripo image-to-model task, publishes JSON progress on
+`/ghost/reconstruction/mesh_status`, and sends the completed signed GLB URL
+on `/ghost/reconstruction/model_url` to the Web bridge. The robot sequence
+continues while FLUX and Tripo work asynchronously.
 Every submitted full-head crop is saved before the HTTP request under
 `/workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures/<request_id>_head_crop.png`.
 The most recent capture is also available at the stable path
@@ -74,15 +79,19 @@ reached that pose (`success_pose_reached`, the `face_*` phases, `dancing`, or
 restoring them automatically when the game leaves those post-turn phases.
 
 The dashboard also includes a PBR GLB viewer labelled “Ghost 三维重建体”.
-During integration it loads the local sample at
+The panel stays hidden until a stable face has been captured. It then shows a
+single cumulative progress bar across FLUX preprocessing, Tripo upload/queue,
+Tripo generation, GLB download, and browser parsing. A previous round's model
+is hidden while a new visitor is being reconstructed, and the interactive
+model replaces the progress display only after the new GLB parses successfully.
+During integration the backend can be seeded with the local sample at
 `/workspaces/zephyr-dev/zephyr_ws/outputs/tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb`.
 The browser receives it from the same-origin `/api/mesh/model.glb` endpoint,
 auto-fits it to the viewport, preserves its textures/materials, and supports
 orbit, zoom, and slow automatic rotation.
 
-The production image-to-3D node can replace that sample by publishing an
-HTTP(S) GLB URL as `std_msgs/msg/String` on
-`/ghost/reconstruction/model_url`. The web bridge downloads the file on a
+`img2mesh` replaces that sample by publishing an HTTP(S) GLB URL as
+`std_msgs/msg/String` on `/ghost/reconstruction/model_url`. The web bridge downloads the file on a
 background thread, validates the GLB header and size, caches up to 100 MiB,
 and updates the viewer without exposing a signed upstream URL to the browser
 or requiring upstream CORS headers:
@@ -166,7 +175,7 @@ shipping a product; see `ghost_tts/THIRD_PARTY.md`.
 source /opt/ros/jazzy/setup.bash
 cd /workspaces/zephyr-dev/zephyr_ws
 colcon build --symlink-install --packages-select \
-  ghost_game_interfaces ghost_tts flux_image_editor ghost_game_orchestrator \
+  ghost_game_interfaces ghost_tts flux_image_editor img2mesh ghost_game_orchestrator \
   ghost_game_face_detection ghost_game
 ```
 
@@ -186,8 +195,8 @@ ros2 launch zephyr_arm_bringup real_world.launch.py \
 source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 ros2 launch ghost_game ghost_game.launch.py
 ```
-This starts the orchestrator, face detector, Piper TTS, and the lightweight
-FLUX ROS bridge. Add
+This starts the orchestrator, face detector, Piper TTS, the lightweight FLUX
+ROS bridge, and `img2mesh`. Add
 `enable_web_monitor:=true` to start the dashboard in the same launch, or
 `enable_face_detection:=false` when no camera/detector is needed. Use
 `enable_tts:=false` for silent operation. The TTS launch arguments are
@@ -201,6 +210,9 @@ Use `enable_face_reconstruction:=false` when the FLUX service is not needed,
 or set `face_reconstruction_server_url:=http://HOST:8090` when it runs on a
 different machine. A missing inference server reports an asynchronous
 reconstruction error and does not stop the gesture or game flow.
+Set `TRIPO_API_KEY` before launch or place an ignored
+`img2mesh/config/local_api.yaml` file locally. Use
+`enable_mesh_reconstruction:=false` to skip Tripo while testing the robot.
 
 For development, each functional package can also run independently:
 
@@ -342,6 +354,8 @@ stuck/blocked back-off, etc). Before a real show, double check:
   bounds around the measured observation pose.
 - `enable_face_reconstruction` / `face_reconstruction_*` - asynchronous FLUX
   submission, ROS topics, and the identity-preserving preprocessing prompt.
+- `enable_mesh_reconstruction` / `mesh_reconstruction_config` - automatic
+  Tripo submission and the Ghost-specific image/status/model URL topics.
 - `tts_*_text` / `tts_joint_found_texts` - edit the stage script without
   changing Python. The joint-found list must contain exactly six lines.
 

@@ -10,3 +10,5 @@ compile_commands.json
 __pycache__/
 *.py[cod]
 
+# Local credentials
+img2mesh/config/local_api.yaml

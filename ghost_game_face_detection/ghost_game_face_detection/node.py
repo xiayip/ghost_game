@@ -36,10 +36,10 @@ class NearestFaceNode(Node):
         # YuNet locates the face rather than the full head. Expand the final
         # selected box so downstream image crops include hair, ears, jaw, and
         # some neck for 3D reconstruction.
-        self.declare_parameter('bbox_expand_left_ratio', 0.35)
-        self.declare_parameter('bbox_expand_right_ratio', 0.35)
-        self.declare_parameter('bbox_expand_top_ratio', 0.55)
-        self.declare_parameter('bbox_expand_bottom_ratio', 0.30)
+        self.declare_parameter('bbox_expand_left_ratio', 0.50)
+        self.declare_parameter('bbox_expand_right_ratio', 0.50)
+        self.declare_parameter('bbox_expand_top_ratio', 0.75)
+        self.declare_parameter('bbox_expand_bottom_ratio', 0.50)
         self.declare_parameter('max_processing_rate', 30.0)
         self.declare_parameter('detector_input_width', 424)
         self.declare_parameter('publish_debug_image', True)

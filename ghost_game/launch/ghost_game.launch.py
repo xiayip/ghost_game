@@ -21,9 +21,14 @@ def generate_launch_description():
         "face_reconstruction_config")
     face_reconstruction_server_url = LaunchConfiguration(
         "face_reconstruction_server_url")
+    enable_mesh_reconstruction = LaunchConfiguration(
+        "enable_mesh_reconstruction")
+    mesh_reconstruction_config = LaunchConfiguration(
+        "mesh_reconstruction_config")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
     web_mesh_model_path = LaunchConfiguration("web_mesh_model_path")
     web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
+    web_mesh_status_topic = LaunchConfiguration("web_mesh_status_topic")
     enable_tts = LaunchConfiguration("enable_tts")
     tts_config = LaunchConfiguration("tts_config")
     tts_backend = LaunchConfiguration("tts_backend")
@@ -85,6 +90,11 @@ def generate_launch_description():
                 description="std_msgs/String topic carrying a remote GLB URL",
             ),
             DeclareLaunchArgument(
+                "web_mesh_status_topic",
+                default_value="/ghost/reconstruction/mesh_status",
+                description="JSON img2mesh progress topic",
+            ),
+            DeclareLaunchArgument(
                 "enable_face_reconstruction",
                 default_value="true",
                 description=(
@@ -106,6 +116,21 @@ def generate_launch_description():
                 "face_reconstruction_server_url",
                 default_value="http://127.0.0.1:8090",
                 description="FLUX HTTP endpoint (local or SSH-forwarded)",
+            ),
+            DeclareLaunchArgument(
+                "enable_mesh_reconstruction",
+                default_value="true",
+                description=(
+                    "Submit each prepared FLUX portrait to Tripo and publish "
+                    "the resulting GLB URL"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "mesh_reconstruction_config",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("img2mesh"), "config", "ghost_game.yaml"]
+                ),
+                description="Ghost-specific img2mesh parameter file",
             ),
             DeclareLaunchArgument(
                 "enable_tts",
@@ -204,6 +229,14 @@ def generate_launch_description():
                 condition=IfCondition(enable_face_reconstruction),
             ),
             Node(
+                package="img2mesh",
+                executable="img2mesh_node",
+                name="img2mesh",
+                output="screen",
+                parameters=[mesh_reconstruction_config],
+                condition=IfCondition(enable_mesh_reconstruction),
+            ),
+            Node(
                 package="ghost_game_orchestrator",
                 executable="ghost_game_web_monitor",
                 name="ghost_game_web_monitor",
@@ -213,6 +246,8 @@ def generate_launch_description():
                         web_mesh_model_path, value_type=str),
                     "mesh_url_topic": ParameterValue(
                         web_mesh_url_topic, value_type=str),
+                    "mesh_status_topic": ParameterValue(
+                        web_mesh_status_topic, value_type=str),
                 }],
                 condition=IfCondition(enable_web_monitor),
             ),

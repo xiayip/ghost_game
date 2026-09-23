@@ -19,10 +19,10 @@ nearest_face:
     # YuNet returns a facial-region box. These ratios expand the selected box
     # into a full-head crop before publishing: left/right use face width,
     # top/bottom use face height. The result is always clipped to the image.
-    bbox_expand_left_ratio: 0.35
-    bbox_expand_right_ratio: 0.35
-    bbox_expand_top_ratio: 0.55
-    bbox_expand_bottom_ratio: 0.30
+    bbox_expand_left_ratio: 0.50
+    bbox_expand_right_ratio: 0.50
+    bbox_expand_top_ratio: 0.75
+    bbox_expand_bottom_ratio: 0.50
     # Profiling on the target showed 12.4 ms median decode + YuNet latency at
     # 424 px input, so the 15 Hz throttle was discarding every other 30 Hz
     # camera frame. Process every frame for lower visual-servo sample latency.

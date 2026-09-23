@@ -85,3 +85,49 @@ def test_mesh_store_rejects_non_http_url():
 
     assert not store.update_from_url('file:///etc/passwd')
     assert json.loads(store.get_json())['message'] == 'invalid_model_url'
+
+
+def test_mesh_store_reports_sanitized_generation_progress():
+    store = _MeshStore()
+    assert store.update_pipeline_status(json.dumps({
+        'request_id': 'request-7',
+        'task_id': 'task-9',
+        'status': 'running',
+        'progress': 63,
+        'model': 'P1-20260311',
+        'model_ready': False,
+        'error': '',
+        'model_url': 'https://models.example/private.glb?token=secret',
+    }))
+
+    info_text = store.get_json()
+    generation = json.loads(info_text)['generation']
+    assert generation['request_id'] == 'request-7'
+    assert generation['task_id'] == 'task-9'
+    assert generation['status'] == 'running'
+    assert generation['progress'] == 63
+    assert generation['model'] == 'P1-20260311'
+    assert generation['model_ready'] is False
+    assert generation['error'] == ''
+    assert generation['updated_at'] is not None
+    assert 'models.example' not in info_text
+    assert 'secret' not in info_text
+
+
+def test_new_face_pipeline_hides_previous_generation_state():
+    store = _MeshStore()
+    store._commit(make_glb(), 'published_url')
+    store.update_pipeline_status(json.dumps({
+        'request_id': 'old', 'status': 'success', 'progress': 100,
+        'model_ready': True,
+    }))
+
+    store.begin_pipeline()
+    generation = json.loads(store.get_json())['generation']
+    assert json.loads(store.get_json())['source'] == 'previous_round'
+    assert generation['status'] == 'preprocessing'
+    assert generation['request_id'] == ''
+    assert generation['progress'] == 0
+
+    store.reset_pipeline()
+    assert json.loads(store.get_json())['generation']['status'] == 'idle'

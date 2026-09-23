@@ -59,23 +59,23 @@ class ExpansionTests(unittest.TestCase):
     def test_expands_face_into_asymmetric_head_crop(self):
         expanded = expand_face_box(
             self.face, self.shape,
-            left_ratio=0.35,
-            right_ratio=0.35,
-            top_ratio=0.55,
-            bottom_ratio=0.30,
+            left_ratio=0.50,
+            right_ratio=0.50,
+            top_ratio=0.75,
+            bottom_ratio=0.50,
         )
-        self.assertEqual(expanded, FaceBox(65, 56, 170, 148, 0.95))
+        self.assertEqual(expanded, FaceBox(50, 40, 200, 180, 0.95))
 
     def test_expansion_is_clipped_to_image(self):
         edge_face = FaceBox(5, 10, 100, 80, 0.95)
         expanded = expand_face_box(
             edge_face, self.shape,
-            left_ratio=0.35,
-            right_ratio=0.35,
-            top_ratio=0.55,
-            bottom_ratio=0.30,
+            left_ratio=0.50,
+            right_ratio=0.50,
+            top_ratio=0.75,
+            bottom_ratio=0.50,
         )
-        self.assertEqual(expanded, FaceBox(0, 0, 140, 114, 0.95))
+        self.assertEqual(expanded, FaceBox(0, 0, 155, 130, 0.95))
 
     def test_zero_expansion_preserves_face_box(self):
         self.assertEqual(

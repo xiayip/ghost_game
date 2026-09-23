@@ -787,6 +787,7 @@ header {
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 0 28px rgba(0, 212, 255, 0.04);
 }
+.mesh-panel.stage-hidden { display: none; }
 .mesh-head {
   display: flex;
   align-items: center;
@@ -872,6 +873,12 @@ header {
   height: 100%;
   display: block;
 }
+.mesh-viewport { transition: opacity 280ms var(--ease-out); }
+.mesh-panel.reconstructing .mesh-viewport {
+  opacity: 0;
+  pointer-events: none;
+}
+.mesh-panel.model-ready .mesh-viewport { opacity: 1; }
 .mesh-hud {
   position: absolute;
   z-index: 4;
@@ -910,6 +917,53 @@ header {
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.2em;
+}
+.mesh-progress-row {
+  width: min(480px, 72%);
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.mesh-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(0, 212, 255, 0.06);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.55);
+}
+.mesh-progress-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 18px,
+    rgba(12, 16, 21, 0.5) 18px 20px
+  );
+}
+.mesh-progress-track i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan-700), var(--cyan-400));
+  box-shadow: var(--glow-cyan);
+  transition: width 420ms var(--ease-out);
+}
+.mesh-progress-row > b {
+  width: 44px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: right;
+  color: var(--cyan-400);
+}
+.mesh-panel.progress-error .mesh-progress-track i {
+  background: var(--danger-400);
+  box-shadow: 0 0 10px rgba(255, 61, 113, 0.55);
 }
 .mesh-foot {
   display: flex;

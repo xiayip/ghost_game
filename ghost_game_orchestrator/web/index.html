@@ -128,7 +128,9 @@
       </div>
     </div>
 
-    <section class="mesh-panel" id="mesh-panel" aria-label="Reconstructed Ghost mesh / Ghost 三维重建体">
+    <section class="mesh-panel stage-hidden reconstructing" id="mesh-panel"
+             aria-hidden="true"
+             aria-label="Reconstructed Ghost mesh / Ghost 三维重建体">
       <div class="mesh-head">
         <div>
           <span class="eyebrow">// Neural Twin // 意识镜像</span>
@@ -145,8 +147,16 @@
           <span id="mesh-meta">WAITING FOR MODEL STREAM</span>
         </div>
         <div class="mesh-placeholder" id="mesh-placeholder">
-          <strong>等待意识实体化</strong>
-          <span>AWAITING NEURAL MESH</span>
+          <strong id="mesh-progress-title">正在建立三维意识镜像</strong>
+          <span id="mesh-progress-stage">AWAITING FACE PROFILE</span>
+          <div class="mesh-progress-row">
+            <div class="mesh-progress-track" role="progressbar"
+                 id="mesh-progress-track" aria-valuemin="0"
+                 aria-valuemax="100" aria-valuenow="0">
+              <i id="mesh-progress-fill"></i>
+            </div>
+            <b id="mesh-progress-percent">0%</b>
+          </div>
         </div>
       </div>
       <div class="mesh-foot">

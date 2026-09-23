@@ -1,0 +1,33 @@
+# Common ROS 2 settings. Edit this file, then restart the node.
+img2mesh:
+  ros__parameters:
+    image_topic: /sensor_msgs/image_raw
+    style_prompt_topic: /img2mesh/style_prompt
+    result_topic: /img2mesh/mesh_result
+    status_topic: /img2mesh/status
+    model_url_topic: /img2mesh/model_url
+    submit_service: /img2mesh/submit
+
+    mode: single
+    api_base_url: https://openapi.tripo3d.ai/v3
+    model: P1-20260311  # 可选：P1-20260311、P2-20260801（P2 目前为预览版）
+    face_limit: 8000  # P1：50–20000；P2 三角面：48–50000；P2 四边面：48–25000
+    texture: true
+    pbr: true
+    quad: false  # 可选：false（三角面）、true（四边面；仅 P2 支持）
+
+    auto_submit: false
+    auto_interval_sec: 60.0
+    log_each_image: false
+    style_enabled: false
+    style_server_url: http://127.0.0.1:8090  # 本地 FLUX.2 Klein 推理服务
+    style_request_timeout_sec: 600.0
+    style_save_output: true
+    style_output_directory: ~/img2mesh_style_outputs
+    poll_interval_sec: 3.0
+    request_timeout_sec: 20.0
+    task_timeout_sec: 600.0
+
+    test_mode: false
+    test_image_path: ''
+    test_exit_on_complete: true

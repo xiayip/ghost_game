@@ -1,0 +1,12 @@
+std_msgs/Header source_header
+string request_id
+string mode
+string model
+string style_task_id
+string style_image_url
+string task_id
+string status
+uint8 progress
+string model_url
+string preview_url
+string error_message

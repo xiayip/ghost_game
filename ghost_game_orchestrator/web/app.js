@@ -177,6 +177,7 @@ const armLayout = document.getElementById('arm-layout');
 const cameraFeed = document.getElementById('camera-feed');
 const cameraPanel = document.getElementById('camera-panel');
 const cameraToggle = document.getElementById('camera-toggle');
+const meshPanel = document.getElementById('mesh-panel');
 const voiceTerminal = document.getElementById('voice-terminal');
 const voiceText = document.getElementById('voice-text');
 const voicePacket = document.getElementById('voice-packet');
@@ -318,6 +319,18 @@ function render(state) {
     (state.camera_ready == null && allFound && CAMERA_VISIBLE_PHASES.has(state.phase));
   armLayout.classList.toggle('camera-mode-hidden', cameraRevealed);
   cameraPanel.classList.toggle('locked', !cameraRevealed);
+
+  const reconstruction = state.reconstruction || {};
+  const reconstructionStatus = String(reconstruction.status || 'idle');
+  const reconstructionVisible = cameraRevealed &&
+    reconstruction.enabled !== false &&
+    !['', 'idle'].includes(reconstructionStatus);
+  meshPanel.classList.toggle('stage-hidden', !reconstructionVisible);
+  meshPanel.setAttribute('aria-hidden', String(!reconstructionVisible));
+  window.ghostReconstructionState = reconstruction;
+  window.dispatchEvent(new CustomEvent('ghost-reconstruction-status', {
+    detail: reconstruction,
+  }));
 
   const joints = state.joints;
   if (!Array.isArray(joints) || joints.length === 0) {

@@ -42,7 +42,12 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -172,12 +177,38 @@ class _MeshStore:
         self._version = 0
         self._updated_at = None
         self._generation = 0
+        self._pipeline = self._new_pipeline_state()
         self.max_bytes = int(max_bytes)
         self.timeout = float(timeout)
         if self.max_bytes <= 0 or self.timeout <= 0:
             raise ValueError('mesh max_bytes and timeout must be positive')
         if str(local_path).strip():
             self.load_local(local_path)
+
+    @staticmethod
+    def _new_pipeline_state(status='idle'):
+        return {
+            'request_id': '',
+            'task_id': '',
+            'status': status,
+            'progress': 0,
+            'model': '',
+            'model_ready': False,
+            'error': '',
+            'updated_at': None,
+        }
+
+    def begin_pipeline(self):
+        """Hide a previous round's model while the new face is prepared."""
+        with self._lock:
+            if self._source == 'published_url':
+                self._source = 'previous_round'
+            self._pipeline = self._new_pipeline_state('preprocessing')
+            self._pipeline['updated_at'] = time.time()
+
+    def reset_pipeline(self):
+        with self._lock:
+            self._pipeline = self._new_pipeline_state()
 
     @staticmethod
     def _validate_glb(data):
@@ -274,6 +305,35 @@ class _MeshStore:
         with self._lock:
             return self._data
 
+    def update_pipeline_status(self, json_text):
+        """Store the sanitized img2mesh status without its signed URL."""
+        try:
+            update = json.loads(json_text)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(update, dict):
+            return False
+        request_id = str(update.get('request_id', '')).strip()
+        status = str(update.get('status', '')).strip()
+        if not request_id or not status:
+            return False
+        try:
+            progress = int(update.get('progress', 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            self._pipeline = {
+                'request_id': request_id,
+                'task_id': str(update.get('task_id', '')),
+                'status': status,
+                'progress': max(0, min(100, progress)),
+                'model': str(update.get('model', '')),
+                'model_ready': bool(update.get('model_ready', False)),
+                'error': str(update.get('error', ''))[:240],
+                'updated_at': time.time(),
+            }
+        return True
+
     def get_json(self):
         with self._lock:
             payload = {
@@ -286,6 +346,7 @@ class _MeshStore:
                 'model_url': (
                     f'/api/mesh/model.glb?v={self._version}'
                     if self._data is not None else None),
+                'generation': dict(self._pipeline),
             }
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
 
@@ -488,6 +549,8 @@ class GhostGameWebMonitor(Node):
             'tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb')
         self.declare_parameter(
             'mesh_url_topic', '/ghost/reconstruction/model_url')
+        self.declare_parameter(
+            'mesh_status_topic', '/ghost/reconstruction/mesh_status')
         self.declare_parameter('mesh_max_bytes', 100 * 1024 * 1024)
         self.declare_parameter('mesh_download_timeout', 60.0)
 
@@ -495,6 +558,7 @@ class GhostGameWebMonitor(Node):
         port = int(self.get_parameter('port').value)
 
         self._store = _StateStore()
+        self._last_reconstruction_status = 'idle'
         self.create_subscription(String, state_topic, self._on_state, 10)
 
         self._tts_store = _TtsStore()
@@ -526,9 +590,17 @@ class GhostGameWebMonitor(Node):
             max_bytes=self.get_parameter('mesh_max_bytes').value,
             timeout=self.get_parameter('mesh_download_timeout').value)
         if self.get_parameter('enable_mesh_model').value:
+            mesh_url_qos = QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
             self.create_subscription(
                 String, self.get_parameter('mesh_url_topic').value,
-                self._on_mesh_url, 10)
+                self._on_mesh_url, mesh_url_qos)
+            self.create_subscription(
+                String, self.get_parameter('mesh_status_topic').value,
+                self._on_mesh_status, mesh_url_qos)
 
         web_dir = get_package_share_directory('ghost_game_orchestrator') + '/web'
         _StateHTTPRequestHandler.state_store = self._store
@@ -558,6 +630,20 @@ class GhostGameWebMonitor(Node):
 
     def _on_state(self, msg: String):
         self._store.set(msg.data)
+        try:
+            state = json.loads(msg.data)
+        except (TypeError, json.JSONDecodeError):
+            return
+        reconstruction = state.get('reconstruction', {})
+        if not isinstance(reconstruction, dict):
+            return
+        status = str(reconstruction.get('status', 'idle'))
+        if (status == 'submitted' and
+                self._last_reconstruction_status != 'submitted'):
+            self._mesh_store.begin_pipeline()
+        elif status == 'idle' and self._last_reconstruction_status != 'idle':
+            self._mesh_store.reset_pipeline()
+        self._last_reconstruction_status = status
 
     def _on_camera(self, msg: CompressedImage):
         self._camera_store.set(bytes(msg.data))
@@ -583,6 +669,12 @@ class GhostGameWebMonitor(Node):
                     f'Reconstructed GLB update failed: {info["message"]}')
 
         threading.Thread(target=download, daemon=True).start()
+
+    def _on_mesh_status(self, msg: String):
+        if not self._mesh_store.update_pipeline_status(msg.data):
+            self.get_logger().warning(
+                'Ignoring malformed reconstructed-mesh status',
+                throttle_duration_sec=2.0)
 
     def _dispatch_controls(self):
         for _ in range(8):

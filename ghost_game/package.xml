@@ -14,6 +14,7 @@
   <exec_depend>ghost_game_orchestrator</exec_depend>
   <exec_depend>ghost_tts</exec_depend>
   <exec_depend>flux_image_editor</exec_depend>
+  <exec_depend>img2mesh</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

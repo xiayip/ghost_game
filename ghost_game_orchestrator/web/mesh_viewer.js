@@ -2,7 +2,19 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const INFO_POLL_MS = 1200;
+const INFO_POLL_MS = 500;
+
+const FLUX_PROGRESS = {
+  submitted: [5, '人脸档案已捕获', 'FACE PROFILE CAPTURED // QUEUING'],
+  accepted: [10, '重建请求已接收', 'RECONSTRUCTION REQUEST ACCEPTED'],
+  encoding: [15, '正在编码视觉档案', 'ENCODING VISUAL PROFILE'],
+  running: [30, '正在生成三维输入图', 'SYNTHESIZING RECONSTRUCTION PORTRAIT'],
+  success: [40, '二维档案生成完成', 'PORTRAIT READY // STARTING 3D PIPELINE'],
+};
+
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+}
 
 function disposeObject(root) {
   root.traverse((object) => {
@@ -19,12 +31,20 @@ function disposeObject(root) {
 }
 
 function initMeshViewer() {
+  const panel = document.getElementById('mesh-panel');
   const container = document.getElementById('mesh-viewport');
   const status = document.getElementById('mesh-status');
   const statusText = status && status.querySelector('b');
   const placeholder = document.getElementById('mesh-placeholder');
+  const progressTitle = document.getElementById('mesh-progress-title');
+  const progressStage = document.getElementById('mesh-progress-stage');
+  const progressTrack = document.getElementById('mesh-progress-track');
+  const progressFill = document.getElementById('mesh-progress-fill');
+  const progressPercent = document.getElementById('mesh-progress-percent');
   const meta = document.getElementById('mesh-meta');
-  if (!container || !status || !statusText || !placeholder || !meta) return;
+  if (!panel || !container || !status || !statusText || !placeholder ||
+      !progressTitle || !progressStage || !progressTrack || !progressFill ||
+      !progressPercent || !meta) return;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(36, 1, 0.01, 100);
@@ -87,12 +107,60 @@ function initMeshViewer() {
   let loadedVersion = 0;
   let loadingVersion = 0;
   let failedVersion = 0;
+  let lastFluxKey = '';
+  let lastGenerationRequest = '';
 
   function setStatus(tone, text, detail) {
     status.dataset.tone = tone;
     statusText.textContent = text;
     if (detail) meta.textContent = detail;
   }
+
+  function showProgress(percent, title, stage, detail, tone = 'loading') {
+    const shown = clampPercent(percent);
+    panel.classList.add('reconstructing');
+    panel.classList.remove('model-ready');
+    panel.classList.toggle('progress-error', tone === 'error');
+    placeholder.classList.remove('hidden');
+    progressTitle.textContent = title;
+    progressStage.textContent = stage;
+    progressFill.style.width = `${shown}%`;
+    progressPercent.textContent = `${shown}%`;
+    progressTrack.setAttribute('aria-valuenow', String(shown));
+    setStatus(tone, tone === 'error' ? 'RECONSTRUCTION LINK ERROR' : stage,
+      detail || `NEURAL RECONSTRUCTION // ${shown}%`);
+  }
+
+  function showPipelineError(percent, error) {
+    showProgress(
+      percent,
+      '三维意识镜像生成失败',
+      'RECONSTRUCTION PIPELINE INTERRUPTED',
+      error || 'CHECK FLUX / TRIPO LINK',
+      'error',
+    );
+  }
+
+  function handleFluxStatus(reconstruction) {
+    const statusName = String(reconstruction?.status || 'idle');
+    const requestId = String(reconstruction?.request_id || 'pending');
+    const keyName = `${requestId}:${statusName}`;
+    if (keyName === lastFluxKey) return;
+    lastFluxKey = keyName;
+    if (statusName === 'idle' || !statusName) return;
+    if (statusName === 'error') {
+      showPipelineError(30, reconstruction?.error);
+      return;
+    }
+    const stage = FLUX_PROGRESS[statusName] || FLUX_PROGRESS.submitted;
+    showProgress(stage[0], stage[1], stage[2],
+      `FLUX PREPROCESS // ${stage[0]}%`);
+  }
+
+  window.addEventListener('ghost-reconstruction-status', (event) => {
+    handleFluxStatus(event.detail || {});
+  });
+  handleFluxStatus(window.ghostReconstructionState || {});
 
   function fitModel(model) {
     const initialBox = new THREE.Box3().setFromObject(model);
@@ -127,8 +195,8 @@ function initMeshViewer() {
     const version = Number(info.version) || 0;
     loadingVersion = version;
     failedVersion = 0;
-    placeholder.classList.remove('hidden');
-    setStatus('loading', 'DECODING NEURAL GEOMETRY', 'GLB STREAM RECEIVED // PARSING');
+    showProgress(99, '正在解码三维意识镜像',
+      'DECODING NEURAL GEOMETRY', 'GLB STREAM RECEIVED // PARSING');
 
     new GLTFLoader().load(
       info.model_url,
@@ -153,29 +221,83 @@ function initMeshViewer() {
           scene.add(currentModel);
           loadedVersion = version;
           loadingVersion = 0;
+          progressFill.style.width = '100%';
+          progressPercent.textContent = '100%';
+          progressTrack.setAttribute('aria-valuenow', '100');
           placeholder.classList.add('hidden');
+          panel.classList.remove('reconstructing', 'progress-error');
+          panel.classList.add('model-ready');
           const megabytes = (Number(info.bytes || 0) / 1048576).toFixed(2);
-          const source = info.source === 'local' ? 'LOCAL SAMPLE' : 'ROS URL';
-          setStatus('ready', 'MODEL LINK STABLE',
-            `${source} // V${version} // ${megabytes} MB`);
+          setStatus('ready', 'NEURAL TWIN MATERIALIZED',
+            `LIVE RECONSTRUCTION // V${version} // ${megabytes} MB`);
         } catch (error) {
           loadingVersion = 0;
           failedVersion = version;
           disposeObject(gltf.scene);
-          setStatus('error', 'MODEL GEOMETRY INVALID', error.message);
+          showPipelineError(99, error.message);
         }
       },
       (event) => {
         if (!event.total) return;
-        const percent = Math.min(100, Math.round(event.loaded / event.total * 100));
-        meta.textContent = `RECEIVING GLB // ${percent}%`;
+        const received = Math.min(100, Math.round(event.loaded / event.total * 100));
+        meta.textContent = `RECEIVING GLB // ${received}%`;
       },
       (error) => {
         loadingVersion = 0;
         failedVersion = version;
-        setStatus('error', 'MODEL STREAM FAILED', error.message || 'GLB LOAD ERROR');
+        showPipelineError(99, error.message || 'GLB LOAD ERROR');
       },
     );
+  }
+
+  function renderGeneration(info) {
+    const generation = info.generation || {};
+    const generationStatus = String(generation.status || 'idle');
+    const requestId = String(generation.request_id || '');
+    const tripoProgress = clampPercent(generation.progress);
+    if (requestId && requestId !== lastGenerationRequest) {
+      lastGenerationRequest = requestId;
+      failedVersion = 0;
+    }
+
+    if (generationStatus === 'error' || generationStatus === 'failed' ||
+        generationStatus === 'cancelled') {
+      showPipelineError(50 + Math.round(tripoProgress * 0.45), generation.error);
+      return true;
+    }
+    if (generationStatus === 'preprocessing') {
+      return true;
+    }
+    if (generationStatus === 'uploading') {
+      showProgress(45, '正在上传特工视觉档案',
+        'UPLOADING PROFILE TO TRIPO', 'IMAGE-TO-MESH LINK // 45%');
+      return true;
+    }
+    if (generationStatus === 'queued') {
+      showProgress(50, '三维生成任务排队中',
+        'NEURAL GEOMETRY QUEUED', 'TRIPO TASK ACCEPTED // 50%');
+      return true;
+    }
+    if (generationStatus === 'running') {
+      const overall = 50 + Math.round(tripoProgress * 0.45);
+      showProgress(overall, '正在重建三维意识镜像',
+        `GENERATING NEURAL GEOMETRY // ${tripoProgress}%`,
+        `TRIPO CORE // ${overall}%`);
+      return true;
+    }
+    if (generationStatus === 'success') {
+      if (info.status === 'downloading') {
+        showProgress(98, '正在接收三维模型',
+          'DOWNLOADING GENERATED GLB', 'SIGNED MODEL LINK // RECEIVING');
+        return true;
+      }
+      if (info.source !== 'published_url') {
+        showProgress(96, '三维生成完成，等待模型链路',
+          'MESH COMPLETE // WAITING FOR GLB LINK', 'TRIPO CORE // 96%');
+        return true;
+      }
+    }
+    return false;
   }
 
   async function pollModel() {
@@ -184,22 +306,26 @@ function initMeshViewer() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const info = await response.json();
       const version = Number(info.version) || 0;
-      if (info.model_url && version !== loadedVersion &&
+      const pipelineHandled = renderGeneration(info);
+      const liveModelReady = !pipelineHandled &&
+        info.source === 'published_url' && info.model_url;
+
+      if (liveModelReady && version !== loadedVersion &&
           version !== loadingVersion && version !== failedVersion) {
         loadModel(info);
-      } else if (!info.model_url) {
-        const tone = info.status === 'error' ? 'error' : 'loading';
-        setStatus(tone,
-          info.status === 'error' ? 'MODEL LINK ERROR' : 'AWAITING MODEL LINK',
-          info.message || 'TOPIC STANDBY // NO GLB');
-      } else if (info.status === 'downloading') {
-        setStatus('loading', 'UPDATING NEURAL GEOMETRY', 'ROS URL // DOWNLOADING');
-      } else if (info.status === 'error' && loadedVersion === version) {
-        // Keep rendering the last good model while reporting the failed update.
-        setStatus('error', 'MODEL UPDATE FAILED', info.message || 'LAST MODEL RETAINED');
+      } else if (liveModelReady && version === loadedVersion) {
+        if (panel.classList.contains('reconstructing')) {
+          placeholder.classList.add('hidden');
+          panel.classList.remove('reconstructing', 'progress-error');
+          panel.classList.add('model-ready');
+        }
+      } else if (!pipelineHandled && info.status === 'error') {
+        showPipelineError(95, info.message || 'MODEL LINK ERROR');
       }
     } catch (error) {
-      setStatus('error', 'MODEL BRIDGE OFFLINE', error.message || 'NO SIGNAL');
+      if (!panel.classList.contains('stage-hidden')) {
+        showPipelineError(0, error.message || 'MODEL BRIDGE OFFLINE');
+      }
     }
     window.setTimeout(pollModel, INFO_POLL_MS);
   }

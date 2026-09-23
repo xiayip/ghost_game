@@ -138,7 +138,7 @@ Next steps:
   source /opt/ros/jazzy/setup.bash
   cd /workspaces/zephyr-dev/zephyr_ws
   colcon build --symlink-install --packages-select \\
-    ghost_game_interfaces ghost_tts flux_image_editor ghost_game_orchestrator \
+    ghost_game_interfaces ghost_tts flux_image_editor img2mesh ghost_game_orchestrator \
     ghost_game_face_detection ghost_game
   source install/setup.bash
   ros2 launch ghost_game ghost_game.launch.py
