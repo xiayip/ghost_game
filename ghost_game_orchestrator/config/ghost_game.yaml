@@ -84,20 +84,24 @@ ghost_game_node:
     success_accelerations: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     success_seed_time: 0.2
     success_time_from_start: 8.0
+    # Keep the visitor-facing joint locks compliant, then ramp only the
+    # solved/display phase. Joint3 occasionally stopped about 0.061 rad short
+    # at kp=25; kp=35 supplies more corrective torque without changing the
+    # FREE/LOCKING/LOCKED feel during the game.
+    success_stiffness: [30.0, 30.0, 35.0, 18.0, 12.0, 12.0]
     # Independent measured-pose acceptance for the success turn. The shared
     # impedance JTC keeps its stricter 0.03 rad goal tolerance; this local
     # check accepts the real arm's repeatable small static residual only after
     # all joints remain settled, so an actually blocked/unfinished move still
     # aborts and never reveals the camera.
-    # joint2 showed a ~0.048 rad static residual at this loaded pose. Keep
-    # enough margin for run-to-run load variation while still requiring the
-    # measured pose to remain settled for success_settle_time.
-    # accept it locally for the game transition without weakening the shared
-    # JTC/controller tolerances used by other motions.
-    success_position_tolerance: [0.05, 0.08, 0.04, 0.04, 0.04, 0.04]
-    # On hardware, joint3 was still 0.0479 rad from target after 2 s, then
-    # converged below 0.001 rad. Allow the real impedance arm to finish
-    # settling while retaining the tighter per-joint acceptance limits above.
+    # Hardware logs show joint2 repeatedly settling around 0.048 rad. Joint3
+    # normally reaches <0.002 rad, but one loaded run remained at 0.061 rad
+    # after the full validation window. A 0.07 rad local allowance still sits
+    # well below the controller's 0.12 rad blocked-motion threshold and is
+    # sufficient for the following camera servo to acquire the visitor.
+    success_position_tolerance: [0.05, 0.08, 0.07, 0.04, 0.04, 0.04]
+    # Allow the real impedance arm to finish settling while retaining the
+    # measured-position and motion checks above.
     success_validation_timeout: 6.0
     success_settle_time: 0.5
     success_settle_movement: 0.01

@@ -59,6 +59,11 @@ all joints are within `success_position_tolerance` and remain settled for
 `success_settle_time`. A blocked or unfinished move therefore does not reveal
 the camera.
 
+After the last fragment is found, the controller ramps from the compliant
+game lock gains to `success_stiffness`. This gives the load-bearing joints
+enough authority for the display/vision pose without making the interactive
+search phase harder to move by hand.
+
 The meta launch also starts `ghost_game_face_detection` and `ghost_tts` by
 default. The detector
 consumes the Gemini 305 RGB stream and publishes the largest visible face

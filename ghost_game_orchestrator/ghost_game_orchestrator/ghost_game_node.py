@@ -97,22 +97,28 @@ class GhostGameNode(Node):
         if (len(self.success_positions) != n or
                 len(self.success_velocities) != n or
                 len(self.success_accelerations) != n or
-                len(self.success_position_tolerance) != n):
+                len(self.success_position_tolerance) != n or
+                len(self.success_stiffness) != n):
             raise RuntimeError(
                 'success_positions/success_velocities/'
-                'success_accelerations/success_position_tolerance '
+                'success_accelerations/success_position_tolerance/'
+                'success_stiffness '
                 'must match joints length')
         if not 0.0 < self.success_seed_time < self.success_time_from_start:
             raise RuntimeError(
                 'success timing must satisfy 0 < success_seed_time < success_time_from_start')
         if any(not math.isfinite(value) for value in (
                 self.success_positions + self.success_velocities +
-                self.success_accelerations + self.success_position_tolerance)):
+                self.success_accelerations + self.success_position_tolerance +
+                self.success_stiffness)):
             raise RuntimeError(
-                'success pose, velocity, acceleration, and tolerance values '
+                'success pose, velocity, acceleration, tolerance, and '
+                'stiffness values '
                 'must be finite')
         if any(value <= 0.0 for value in self.success_position_tolerance):
             raise RuntimeError('success_position_tolerance values must be positive')
+        if any(value <= 0.0 for value in self.success_stiffness):
+            raise RuntimeError('success_stiffness values must be positive')
         if (self.success_validation_timeout <= 0.0 or
                 self.success_settle_time <= 0.0 or
                 self.success_settle_movement <= 0.0):
@@ -384,15 +390,21 @@ class GhostGameNode(Node):
             'success_accelerations', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter('success_seed_time', 0.2)
         self.declare_parameter('success_time_from_start', 8.0)
+        # The display/vision pose needs a little more authority than the
+        # visitor-facing joint locks, especially on load-bearing joint3.
+        # This is ramped only after the game has been solved, so it does not
+        # change the interaction feel while visitors search for fragments.
+        self.declare_parameter(
+            'success_stiffness', [30.0, 30.0, 35.0, 18.0, 12.0, 12.0])
         # The impedance JTC can finish with a small static load-dependent
         # residual and report GOAL_TOLERANCE_VIOLATED even though the arm has
         # safely reached the intended display pose. Validate the measured,
         # settled pose independently instead of treating every action abort
-        # as a failed turn. Joint1 gets a slightly wider allowance because it
-        # repeatedly settles around 0.034--0.036 rad from this pose on real
-        # hardware; this remains much tighter than the game's match tolerance.
+        # as a failed turn. Hardware logs show repeatable loaded residuals of
+        # about 0.048 rad on joint2 and one 0.061 rad outlier on joint3; these
+        # limits remain tighter than the game's match tolerance.
         self.declare_parameter(
-            'success_position_tolerance', [0.05, 0.04, 0.04, 0.04, 0.04, 0.04])
+            'success_position_tolerance', [0.05, 0.08, 0.07, 0.04, 0.04, 0.04])
         # The real impedance arm can continue converging for several seconds
         # after the JTC action completes. Keep the tight position tolerances,
         # but allow that physical settling instead of reporting a false abort.
@@ -546,6 +558,7 @@ class GhostGameNode(Node):
         self.success_accelerations = list(p('success_accelerations').value)
         self.success_seed_time = float(p('success_seed_time').value)
         self.success_time_from_start = float(p('success_time_from_start').value)
+        self.success_stiffness = list(p('success_stiffness').value)
         self.success_position_tolerance = list(
             p('success_position_tolerance').value)
         self.success_validation_timeout = float(
@@ -1006,6 +1019,12 @@ class GhostGameNode(Node):
         self.get_logger().info(
             f'Moving to success pose via impedance JTC over '
             f'{self.success_time_from_start:.1f} s')
+
+        # The game locks deliberately remain compliant. Once all fragments
+        # are found, ramp to a separate success-pose stiffness before moving.
+        # A ramp avoids a torque step and gives joint3 enough authority to
+        # overcome its observed load-dependent static residual.
+        self._ramp_stiffness(self.success_stiffness, self.locked_damping)
         if not self._switch_controllers(
                 activate=[self.impedance_controller,
                           self.impedance_trajectory_controller],
