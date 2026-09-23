@@ -19,6 +19,10 @@ Also proxies nearest_face's annotated compressed stream (sensor_msgs/
 CompressedImage, JPEG) so the dashboard shows the selected face bounding box
 - see /api/camera.jpg below.
 
+The FLUX output PNG is cached separately and served from a same-origin URL so
+the reconstruction panel can show the generated portrait while Tripo builds
+the GLB, then retain it as a picture-in-picture over the interactive 3D view.
+
 The same bridge subscribes to ghost_tts's accepted-caption stream and exposes
 the latest caption as JSON. The browser therefore shows exactly the line the
 voice worker receives, without duplicating the game's stage script.
@@ -128,6 +132,56 @@ class _CameraStore:
     def get(self):
         with self._lock:
             return self._jpeg
+
+
+class _ReconstructionImageStore:
+    """Bounded latest-value cache for FLUX's exact generated PNG bytes."""
+
+    _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+    def __init__(self, max_bytes=20 * 1024 * 1024):
+        self._lock = threading.Lock()
+        self._png = None
+        self._version = 0
+        self._updated_at = None
+        self.max_bytes = int(max_bytes)
+        if self.max_bytes <= 0:
+            raise ValueError('reconstruction image max_bytes must be positive')
+
+    def set(self, png_bytes):
+        data = bytes(png_bytes)
+        if (not data.startswith(self._PNG_SIGNATURE) or
+                len(data) > self.max_bytes):
+            return False
+        with self._lock:
+            self._png = data
+            self._version += 1
+            self._updated_at = time.time()
+        return True
+
+    def clear(self):
+        with self._lock:
+            self._png = None
+            self._updated_at = None
+
+    def get(self):
+        with self._lock:
+            return self._png
+
+    def get_json(self):
+        with self._lock:
+            ready = self._png is not None
+            payload = {
+                'ready': ready,
+                'version': self._version,
+                'bytes': len(self._png) if ready else 0,
+                'updated_at': self._updated_at,
+                'image_url': (
+                    f'/api/reconstruction/image.png?v={self._version}'
+                    if ready else None
+                ),
+            }
+        return json.dumps(payload, separators=(',', ':'))
 
 
 class _TtsStore:
@@ -443,6 +497,7 @@ class _ThreadingHTTPServer(http.server.ThreadingHTTPServer):
 class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     state_store: _StateStore = None    # bound by GhostGameWebMonitor before serving
     camera_store: _CameraStore = None  # bound by GhostGameWebMonitor before serving
+    reconstruction_image_store: _ReconstructionImageStore = None
     tts_store: _TtsStore = None        # bound by GhostGameWebMonitor before serving
     mesh_store: _MeshStore = None      # local fallback + latest URL model
     control_bridge: _ControlBridge = None
@@ -487,6 +542,26 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(404, 'No reconstructed model available')
                 return
             self._send_bytes(model, 'model/gltf-binary')
+            return
+        if path in ('/api/reconstruction/image/info',
+                    '/api/reconstruction/image/info/'):
+            payload = (
+                self.reconstruction_image_store.get_json()
+                if self.reconstruction_image_store else '{}'
+            )
+            self._send_bytes(
+                payload.encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/reconstruction/image.png',
+                    '/api/reconstruction/image.png/'):
+            png = (
+                self.reconstruction_image_store.get()
+                if self.reconstruction_image_store else None
+            )
+            if png is None:
+                self.send_error(404, 'No FLUX reconstruction image available')
+                return
+            self._send_bytes(png, 'image/png')
             return
         if path in ('/api/camera.jpg', '/api/camera.jpg/'):
             jpeg_bytes = self.camera_store.get() if self.camera_store else None
@@ -553,6 +628,11 @@ class GhostGameWebMonitor(Node):
             'camera_topic', '/nearest_face/debug_image/compressed')
         self.declare_parameter(
             'gesture_camera_topic', '/gestures/debug_image/compressed')
+        self.declare_parameter(
+            'reconstruction_image_topic',
+            '/ghost/reconstruction/image_png')
+        self.declare_parameter(
+            'reconstruction_image_max_bytes', 20 * 1024 * 1024)
         self.declare_parameter('enable_mesh_model', True)
         self.declare_parameter(
             'mesh_model_path',
@@ -603,6 +683,14 @@ class GhostGameWebMonitor(Node):
                 self._on_camera,
                 qos_profile_sensor_data)
 
+        self._reconstruction_image_store = _ReconstructionImageStore(
+            self.get_parameter('reconstruction_image_max_bytes').value)
+        self.create_subscription(
+            CompressedImage,
+            self.get_parameter('reconstruction_image_topic').value,
+            self._on_reconstruction_image,
+            10)
+
         self._mesh_store = _MeshStore(
             self.get_parameter('mesh_model_path').value
             if self.get_parameter('enable_mesh_model').value else '',
@@ -624,6 +712,8 @@ class GhostGameWebMonitor(Node):
         web_dir = get_package_share_directory('ghost_game_orchestrator') + '/web'
         _StateHTTPRequestHandler.state_store = self._store
         _StateHTTPRequestHandler.camera_store = self._camera_store
+        _StateHTTPRequestHandler.reconstruction_image_store = (
+            self._reconstruction_image_store)
         _StateHTTPRequestHandler.tts_store = self._tts_store
         _StateHTTPRequestHandler.mesh_store = self._mesh_store
         _StateHTTPRequestHandler.control_bridge = self._control_bridge
@@ -660,12 +750,20 @@ class GhostGameWebMonitor(Node):
         if (status == 'submitted' and
                 self._last_reconstruction_status != 'submitted'):
             self._mesh_store.begin_pipeline()
+            self._reconstruction_image_store.clear()
         elif status == 'idle' and self._last_reconstruction_status != 'idle':
             self._mesh_store.reset_pipeline()
+            self._reconstruction_image_store.clear()
         self._last_reconstruction_status = status
 
     def _on_camera(self, msg: CompressedImage):
         self._camera_store.set(bytes(msg.data))
+
+    def _on_reconstruction_image(self, msg: CompressedImage):
+        if not self._reconstruction_image_store.set(msg.data):
+            self.get_logger().warning(
+                'Ignoring invalid or oversized FLUX reconstruction PNG',
+                throttle_duration_sec=2.0)
 
     def _on_tts_text(self, msg: String):
         self._tts_store.set(msg.data)

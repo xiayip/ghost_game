@@ -4,6 +4,34 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const INFO_POLL_MS = 500;
 
+function installFineWheelZoom(controls, camera, element) {
+  const sensitivity = 0.00012;
+  const maxPixelDelta = 80;
+  element.addEventListener('wheel', (event) => {
+    if (!controls.enabled) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const unit = event.deltaMode === 1
+      ? 16
+      : event.deltaMode === 2 ? Math.max(1, element.clientHeight) : 1;
+    const delta = THREE.MathUtils.clamp(
+      event.deltaY * unit, -maxPixelDelta, maxPixelDelta,
+    );
+    const offset = camera.position.clone().sub(controls.target);
+    const distance = offset.length();
+    if (!Number.isFinite(distance) || distance <= 1e-6) return;
+    const nextDistance = THREE.MathUtils.clamp(
+      distance * Math.exp(delta * sensitivity),
+      controls.minDistance,
+      controls.maxDistance,
+    );
+    camera.position.copy(controls.target).add(
+      offset.multiplyScalar(nextDistance / distance),
+    );
+    controls.update();
+  }, { passive: false, capture: true });
+}
+
 const FLUX_PROGRESS = {
   submitted: [5, '人脸档案已捕获', 'FACE PROFILE CAPTURED // QUEUING'],
   accepted: [10, '重建请求已接收', 'RECONSTRUCTION REQUEST ACCEPTED'],
@@ -33,6 +61,7 @@ function disposeObject(root) {
 function initMeshViewer() {
   const panel = document.getElementById('mesh-panel');
   const container = document.getElementById('mesh-viewport');
+  const portrait = document.getElementById('mesh-portrait');
   const status = document.getElementById('mesh-status');
   const statusText = status && status.querySelector('b');
   const placeholder = document.getElementById('mesh-placeholder');
@@ -42,7 +71,7 @@ function initMeshViewer() {
   const progressFill = document.getElementById('mesh-progress-fill');
   const progressPercent = document.getElementById('mesh-progress-percent');
   const meta = document.getElementById('mesh-meta');
-  if (!panel || !container || !status || !statusText || !placeholder ||
+  if (!panel || !container || !portrait || !status || !statusText || !placeholder ||
       !progressTitle || !progressStage || !progressTrack || !progressFill ||
       !progressPercent || !meta) return;
 
@@ -62,9 +91,7 @@ function initMeshViewer() {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
-  // Match the arm viewer's fine wheel zoom. The default zoomSpeed=1 produces
-  // large distance changes in this compact reconstruction viewport.
-  controls.zoomSpeed = 0.25;
+  installFineWheelZoom(controls, camera, renderer.domElement);
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.9;
   controls.target.set(0, 0, 0);
@@ -112,6 +139,51 @@ function initMeshViewer() {
   let failedVersion = 0;
   let lastFluxKey = '';
   let lastGenerationRequest = '';
+  let portraitVersion = 0;
+  let portraitRequestId = '';
+  let portraitRetryTimer = 0;
+
+  function clearPortrait(requestId = '') {
+    window.clearTimeout(portraitRetryTimer);
+    portraitRetryTimer = 0;
+    portraitVersion = 0;
+    portraitRequestId = requestId;
+    portrait.removeAttribute('src');
+    panel.classList.remove('portrait-ready');
+  }
+
+  function schedulePortraitRetry(requestId) {
+    window.clearTimeout(portraitRetryTimer);
+    portraitRetryTimer = window.setTimeout(() => loadPortrait(requestId), 500);
+  }
+
+  async function loadPortrait(requestId) {
+    if (requestId !== portraitRequestId) return;
+    try {
+      const response = await fetch('/api/reconstruction/image/info', {
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const info = await response.json();
+      const version = Number(info.version) || 0;
+      if (!info.ready || !info.image_url) {
+        schedulePortraitRetry(requestId);
+        return;
+      }
+      if (version === portraitVersion && panel.classList.contains('portrait-ready')) {
+        return;
+      }
+      portrait.onload = () => {
+        if (requestId !== portraitRequestId) return;
+        portraitVersion = version;
+        panel.classList.add('portrait-ready');
+      };
+      portrait.onerror = () => schedulePortraitRetry(requestId);
+      portrait.src = info.image_url;
+    } catch (_error) {
+      schedulePortraitRetry(requestId);
+    }
+  }
 
   function setStatus(tone, text, detail) {
     status.dataset.tone = tone;
@@ -151,6 +223,12 @@ function initMeshViewer() {
     if (keyName === lastFluxKey) return;
     lastFluxKey = keyName;
     if (statusName === 'idle' || !statusName) return;
+    if (statusName === 'submitted') {
+      clearPortrait('');
+    } else if (requestId && requestId !== 'pending' &&
+               requestId !== portraitRequestId) {
+      portraitRequestId = requestId;
+    }
     if (statusName === 'error') {
       showPipelineError(30, reconstruction?.error);
       return;
@@ -158,6 +236,7 @@ function initMeshViewer() {
     const stage = FLUX_PROGRESS[statusName] || FLUX_PROGRESS.submitted;
     showProgress(stage[0], stage[1], stage[2],
       `FLUX PREPROCESS // ${stage[0]}%`);
+    if (statusName === 'success') loadPortrait(requestId);
   }
 
   window.addEventListener('ghost-reconstruction-status', (event) => {

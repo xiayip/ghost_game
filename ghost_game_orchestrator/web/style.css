@@ -868,18 +868,110 @@ header {
   border-right: 1px solid var(--cyan-400);
   border-bottom: 1px solid var(--cyan-400);
 }
+.mesh-portrait {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  opacity: 0;
+  transform: scale(1.012);
+  filter: saturate(1.08) contrast(1.04);
+  background: #090d12;
+  pointer-events: none;
+  transition:
+    opacity 420ms var(--ease-out),
+    transform 700ms var(--ease-out),
+    width 360ms var(--ease-out),
+    height 360ms var(--ease-out);
+}
+.mesh-panel.portrait-ready .mesh-portrait {
+  opacity: 1;
+  transform: scale(1);
+}
+.mesh-portrait:not([src]) { visibility: hidden; }
+.mesh-portrait-label,
+.mesh-pip-label {
+  position: absolute;
+  z-index: 8;
+  display: none;
+  padding: 5px 8px;
+  border: 1px solid rgba(0, 212, 255, 0.28);
+  background: rgba(5, 10, 15, 0.78);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--cyan-400);
+}
+.mesh-portrait-label {
+  top: 22px;
+  left: 22px;
+}
+.mesh-panel.portrait-ready .mesh-portrait-label { display: block; }
+.mesh-pip-label {
+  top: 22px;
+  left: 22px;
+}
+.mesh-panel.model-ready .mesh-pip-label { display: block; }
 .mesh-viewport,
 .mesh-viewport canvas {
   width: 100%;
   height: 100%;
   display: block;
 }
-.mesh-viewport { transition: opacity 280ms var(--ease-out); }
+.mesh-viewport {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  transition:
+    opacity 280ms var(--ease-out),
+    width 360ms var(--ease-out),
+    height 360ms var(--ease-out);
+}
 .mesh-panel.reconstructing .mesh-viewport {
   opacity: 0;
   pointer-events: none;
 }
-.mesh-panel.model-ready .mesh-viewport { opacity: 1; }
+.mesh-panel.model-ready .mesh-viewport {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  opacity: 1;
+  pointer-events: auto;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.mesh-panel.model-ready.portrait-ready .mesh-portrait {
+  top: 22px;
+  right: 22px;
+  bottom: auto;
+  left: auto;
+  width: min(32%, 330px);
+  height: min(48%, 300px);
+  z-index: 6;
+  object-fit: contain;
+  overflow: hidden;
+  border: 1px solid rgba(0, 212, 255, 0.48);
+  border-radius: 4px;
+  background: rgba(4, 9, 14, 0.94);
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.52),
+    0 0 22px rgba(0, 212, 255, 0.12),
+    inset 0 0 24px rgba(0, 212, 255, 0.04);
+}
+.mesh-panel.model-ready.portrait-ready .mesh-portrait-label {
+  top: 30px;
+  right: 30px;
+  left: auto;
+}
 .mesh-hud {
   position: absolute;
   z-index: 4;
@@ -908,6 +1000,23 @@ header {
   color: var(--fg-tertiary);
 }
 .mesh-placeholder.hidden { display: none; }
+.mesh-panel.portrait-ready.reconstructing .mesh-placeholder {
+  inset: auto 22px 22px 22px;
+  align-items: flex-start;
+  padding: 15px 18px 14px;
+  border: 1px solid rgba(0, 212, 255, 0.26);
+  border-radius: 4px;
+  background: rgba(5, 10, 15, 0.84);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+}
+.mesh-panel.portrait-ready.reconstructing .mesh-placeholder strong {
+  font-size: 16px;
+}
+.mesh-panel.portrait-ready.reconstructing .mesh-progress-row {
+  width: 100%;
+  margin-top: 8px;
+}
 .mesh-placeholder strong {
   font-family: var(--font-cyber-cn);
   font-size: 22px;
@@ -1133,4 +1242,17 @@ header {
   .mesh-body { min-height: 380px; height: 52vh; }
   .mesh-foot { flex-direction: column; }
   .mesh-hud span:first-child { display: none; }
+  .mesh-panel.model-ready.portrait-ready .mesh-portrait {
+    top: 18px;
+    right: 18px;
+    width: min(44%, 250px);
+    height: min(38%, 210px);
+  }
+  .mesh-panel.model-ready.portrait-ready .mesh-portrait-label {
+    top: 24px;
+    right: 24px;
+  }
+  .mesh-panel.portrait-ready.reconstructing .mesh-placeholder {
+    inset: auto 14px 14px 14px;
+  }
 }

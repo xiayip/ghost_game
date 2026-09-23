@@ -50,6 +50,38 @@ const GHOST_COLOR = 0x2a3140;
 const LOCKED_COLOR = 0x00f5a0; // --success-400, matches the progress-card "locked" state
 const GHOST_OPACITY = 0.16;
 
+// OrbitControls applies a multiplicative zoom for every wheel event. Modern
+// touchpads can emit dozens of events for one gesture, which makes the camera
+// jump even when zoomSpeed is low. Convert wheel delta to one bounded,
+// continuous distance change instead so mouse wheels and touchpads agree.
+function installFineWheelZoom(controls, camera, element) {
+  const sensitivity = 0.00012;
+  const maxPixelDelta = 80;
+  element.addEventListener('wheel', (event) => {
+    if (!controls.enabled) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const unit = event.deltaMode === 1
+      ? 16
+      : event.deltaMode === 2 ? Math.max(1, element.clientHeight) : 1;
+    const delta = THREE.MathUtils.clamp(
+      event.deltaY * unit, -maxPixelDelta, maxPixelDelta,
+    );
+    const offset = camera.position.clone().sub(controls.target);
+    const distance = offset.length();
+    if (!Number.isFinite(distance) || distance <= 1e-6) return;
+    const nextDistance = THREE.MathUtils.clamp(
+      distance * Math.exp(delta * sensitivity),
+      controls.minDistance,
+      controls.maxDistance,
+    );
+    camera.position.copy(controls.target).add(
+      offset.multiplyScalar(nextDistance / distance),
+    );
+    controls.update();
+  }, { passive: false, capture: true });
+}
+
 function ghostMaterial() {
   return new THREE.MeshStandardMaterial({
     color: GHOST_COLOR, metalness: 0.35, roughness: 0.55,
@@ -229,10 +261,9 @@ function init() {
   controls.target.set(0, 0.2, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  // OrbitControls defaults to zoomSpeed=1, which makes each wheel notch
-  // noticeably jump on this compact panel. Keep zoom precise enough for
-  // inspecting the arm pose without changing drag/orbit sensitivity.
-  controls.zoomSpeed = 0.25;
+  controls.minDistance = 0.38;
+  controls.maxDistance = 3.2;
+  installFineWheelZoom(controls, camera, renderer.domElement);
 
   scene.add(new THREE.AmbientLight(0x8899aa, 0.7));
   const rim = new THREE.DirectionalLight(0x00d4ff, 1.1);
