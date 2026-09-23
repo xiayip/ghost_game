@@ -2,7 +2,7 @@
 
 import cv2
 import numpy as np
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 
 
 _CHANNELS = {
@@ -78,3 +78,33 @@ def image_to_png(message, max_bytes=20_000_000):
     if len(data) > max_bytes:
         raise ValueError(f'PNG 超过 Tripo 单图 20 MB 限制: {len(data)} 字节')
     return data
+
+
+def compressed_image_to_png(message, max_bytes=20_000_000):
+    """Return the exact PNG payload from a CompressedImage after validation.
+
+    FLUX publishes its generated PNG on a compressed topic. Passing those
+    bytes through unchanged makes the image uploaded to Tripo auditable and
+    avoids a decode/re-encode round trip. Non-PNG compressed images are
+    decoded and normalized to PNG for compatibility with the Tripo uploader.
+    """
+    if not isinstance(message, CompressedImage):
+        raise ValueError('期望 sensor_msgs/msg/CompressedImage')
+    data = bytes(message.data)
+    if not data:
+        raise ValueError('收到空压缩图像')
+    if len(data) > max_bytes:
+        raise ValueError(f'压缩图像超过 Tripo 单图 20 MB 限制: {len(data)} 字节')
+    pixels = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if pixels is None or pixels.size == 0:
+        raise ValueError(f'无法解码压缩图像: {message.format!r}')
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return data
+    encoded, png = cv2.imencode('.png', pixels)
+    if not encoded:
+        raise ValueError('压缩图像转 PNG 失败')
+    normalized = png.tobytes()
+    if len(normalized) > max_bytes:
+        raise ValueError(
+            f'PNG 超过 Tripo 单图 20 MB 限制: {len(normalized)} 字节')
+    return normalized

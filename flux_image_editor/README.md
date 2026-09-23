@@ -121,15 +121,15 @@ source install/setup.bash
 /nearest_face/head_crop
   + /ghost/reconstruction/prompt
   -> FLUX HTTP service
-  -> /ghost/reconstruction/image       (future img2mesh input)
-  -> /ghost/reconstruction/image_png
+  -> /ghost/reconstruction/image
+  -> /ghost/reconstruction/image_png   (exact img2mesh input)
   -> /ghost/reconstruction/status
 ```
 
 编排节点只在人脸稳定并居中后发布一次提示词。FLUX 请求在工作线程中
 运行，服务未启动或推理失败只会发布 `status=error`，不会阻塞机械臂动作。
-本功能包完成图像预处理，不直接生成网格；后续图生 3D 节点应订阅
-`/ghost/reconstruction/image`。
+本功能包完成图像预处理，不直接生成网格；图生 3D 节点订阅
+`/ghost/reconstruction/image_png`，直接上传 FLUX 返回的 PNG 字节。
 
 原始完整头部裁剪会先保存到
 `/workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures/<request_id>_head_crop.png`，
@@ -274,7 +274,8 @@ docker compose -f docker/compose.yaml logs -f flux-klein
 先单独验证 FLUX 输出的人物一致性和风格效果。验证完成后，把 `img2mesh/config/img2mesh.yaml` 中的输入改为：
 
 ```yaml
-image_topic: /flux_image_editor/image_raw
+image_topic: /flux_image_editor/image_png
+input_compressed: true
 ```
 
 使用普通的 `img2mesh.launch.py`，不要使用会再次调用 Tripo 图像编辑 API 的 `img2mesh_style.launch.py`。目前两个包之间没有自动调用三维提交服务；可先在收到 FLUX `success` 后手动调用：

@@ -51,8 +51,9 @@ the prompt without blocking arm motion. The edited image is published on
 `/ghost/reconstruction/image` and its exact PNG bytes on
 `/ghost/reconstruction/image_png`; JSON progress and the saved path appear on
 `/ghost/reconstruction/status` and inside the orchestrator state as
-`reconstruction`. `img2mesh` consumes each completed FLUX image, starts one
-Tripo image-to-model task, publishes JSON progress on
+`reconstruction`. `img2mesh` consumes the exact PNG byte stream from
+`/ghost/reconstruction/image_png`, uploads it unchanged, starts one Tripo
+image-to-model task, publishes JSON progress on
 `/ghost/reconstruction/mesh_status`, and sends the completed signed GLB URL
 on `/ghost/reconstruction/model_url` to the Web bridge. The robot sequence
 continues while FLUX and Tripo work asynchronously.

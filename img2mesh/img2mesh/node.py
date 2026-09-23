@@ -15,7 +15,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -23,7 +23,11 @@ from ghost_game_interfaces.msg import MeshResult
 from flux_image_editor.client import EditorClient, EditorError
 
 from img2mesh.config import load_common_parameters, load_local_api_key
-from img2mesh.image_codec import array_to_image_message, image_to_png
+from img2mesh.image_codec import (
+    array_to_image_message,
+    compressed_image_to_png,
+    image_to_png,
+)
 from img2mesh.tripo_client import TripoClient, TripoError, TripoTaskError
 
 
@@ -43,7 +47,7 @@ def validate_settings(values):
         return 'face_limit 必须是整数'
     if not low <= values['face_limit'] <= high:
         return f'face_limit 必须在 {low}～{high} 之间'
-    for name in ('texture', 'pbr', 'quad', 'auto_submit', 'style_enabled',
+    for name in ('input_compressed', 'texture', 'pbr', 'quad', 'auto_submit', 'style_enabled',
                  'style_save_output', 'log_each_image'):
         if not isinstance(values[name], bool):
             return f'{name} 必须是布尔值'
@@ -146,8 +150,11 @@ class Img2MeshNode(Node):
                 f'文件测试模式；读取 {self.get_parameter("test_image_path").value}'
             )
         else:
+            input_type = (
+                CompressedImage
+                if self.get_parameter('input_compressed').value else Image)
             self._subscriber = self.create_subscription(
-                Image, image_topic, self._on_image, qos_profile_sensor_data,
+                input_type, image_topic, self._on_image, qos_profile_sensor_data,
             )
             if (self.get_parameter('auto_submit').value
                     and self.get_parameter('style_enabled').value):
@@ -179,7 +186,7 @@ class Img2MeshNode(Node):
     def _validate_parameters(self, parameters):
         values = self._settings()
         startup_only = (
-            'test_mode', 'test_image_path', 'image_topic',
+            'test_mode', 'test_image_path', 'image_topic', 'input_compressed',
             'style_prompt_topic', 'result_topic', 'status_topic',
             'model_url_topic', 'submit_service')
         if any(p.name in startup_only and p.value != values[p.name]
@@ -197,10 +204,13 @@ class Img2MeshNode(Node):
         self._image_generation += 1
         if self._image_count == 1 or self.get_parameter('log_each_image').value:
             stamp = message.header.stamp
+            if isinstance(message, CompressedImage):
+                description = f'{message.format or "compressed"} {len(message.data)} bytes'
+            else:
+                description = f'{message.width}x{message.height} {message.encoding}'
             self.get_logger().info(
                 f'收到 {self.get_parameter("image_topic").value} #{self._image_count}: '
-                f'{message.width}x{message.height} {message.encoding} '
-                f'stamp={stamp.sec}.{stamp.nanosec:09d}'
+                f'{description} stamp={stamp.sec}.{stamp.nanosec:09d}'
             )
         self._maybe_auto_submit()
 
@@ -311,7 +321,9 @@ class Img2MeshNode(Node):
                 return False, '已有生成任务进行中，请等待结果'
             self._busy = True
         try:
-            png = image_to_png(image)
+            png = (
+                compressed_image_to_png(image)
+                if isinstance(image, CompressedImage) else image_to_png(image))
         except Exception as exc:
             with self._busy_lock:
                 self._busy = False

@@ -2,9 +2,10 @@
 
 ROS 2 bridge from a prepared portrait to a textured Tripo GLB model.
 
-In the Ghost Game launch, `flux_image_editor` publishes one prepared portrait
-on `/ghost/reconstruction/image`. Every new image automatically starts one
-Tripo image-to-model task. Progress is published as JSON on
+In the Ghost Game launch, `flux_image_editor` publishes the exact generated
+PNG on `/ghost/reconstruction/image_png`. `img2mesh` uploads those PNG bytes
+unchanged, and every new image automatically starts one Tripo image-to-model
+task. Progress is published as JSON on
 `/ghost/reconstruction/mesh_status`; the completed signed GLB URL is published
 on `/ghost/reconstruction/model_url` and is consumed by the Web monitor.
 

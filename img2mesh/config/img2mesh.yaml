@@ -2,6 +2,7 @@
 img2mesh:
   ros__parameters:
     image_topic: /sensor_msgs/image_raw
+    input_compressed: false
     style_prompt_topic: /img2mesh/style_prompt
     result_topic: /img2mesh/mesh_result
     status_topic: /img2mesh/status

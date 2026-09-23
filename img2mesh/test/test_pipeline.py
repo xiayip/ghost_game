@@ -11,14 +11,18 @@ import yaml
 from rclpy.parameter import Parameter
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from ghost_game_interfaces.msg import MeshResult
 from flux_image_editor.client import EditResponse, EditorError
 
-from img2mesh.image_codec import array_to_image_message, image_to_png
+from img2mesh.image_codec import (
+    array_to_image_message,
+    compressed_image_to_png,
+    image_to_png,
+)
 from img2mesh.config import load_common_parameters, load_local_api_key
 from img2mesh.node import Img2MeshNode, validate_settings
 from img2mesh.tripo_client import TripoClient
@@ -42,6 +46,30 @@ def test_png_keeps_alpha_channel():
     decoded = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     assert decoded.shape == (260, 300, 4)
     assert np.array_equal(decoded, image)
+
+
+def test_flux_compressed_png_bytes_pass_through_unchanged():
+    pixels = np.zeros((64, 48, 3), dtype=np.uint8)
+    pixels[:, :, 1] = 180
+    encoded, png = cv2.imencode('.png', pixels)
+    assert encoded
+    message = CompressedImage()
+    message.format = 'png'
+    message.data = png.tobytes()
+
+    assert compressed_image_to_png(message) == png.tobytes()
+
+
+def test_non_png_compressed_image_is_normalized_to_png():
+    pixels = np.zeros((64, 48, 3), dtype=np.uint8)
+    encoded, jpeg = cv2.imencode('.jpg', pixels)
+    assert encoded
+    message = CompressedImage()
+    message.format = 'jpeg'
+    message.data = jpeg.tobytes()
+
+    png = compressed_image_to_png(message)
+    assert png.startswith(b'\x89PNG\r\n\x1a\n')
 
 
 class FakeResponse:
@@ -268,6 +296,58 @@ def test_local_api_key_is_used_without_export_or_ros_parameter(monkeypatch):
         assert accepted
         node._worker.join(timeout=5)
         assert keys == ['local-test-key']
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.try_shutdown()
+
+
+def test_compressed_flux_png_is_uploaded_without_reencoding(monkeypatch):
+    uploaded = []
+
+    class StubSession:
+        def close(self):
+            pass
+
+    class StubClient:
+        def __init__(self, *_):
+            self.session = StubSession()
+
+        def upload_png(self, png):
+            uploaded.append(png)
+            return 'styled_file_token'
+
+        def submit_image(self, image_input, *_):
+            assert image_input == 'styled_file_token'
+            return 'styled_task'
+
+        def wait_for_task(self, *_):
+            return {'model_url': 'https://cdn.example/styled.glb'}
+
+    monkeypatch.setattr('img2mesh.node.TripoClient', StubClient)
+    defaults = Img2MeshNode.PARAM_DEFAULTS.copy()
+    defaults.update({
+        'api_key': 'test-key',
+        'input_compressed': True,
+        'image_topic': '/test/flux/image_png',
+    })
+    monkeypatch.setattr(Img2MeshNode, 'PARAM_DEFAULTS', defaults)
+    pixels = np.full((80, 64, 3), 127, dtype=np.uint8)
+    encoded, png = cv2.imencode('.png', pixels)
+    assert encoded
+    message = CompressedImage()
+    message.format = 'png'
+    message.data = png.tobytes()
+
+    rclpy.init()
+    node = None
+    try:
+        node = Img2MeshNode()
+        node._on_image(message)
+        accepted, _ = node._try_submit()
+        assert accepted
+        node._worker.join(timeout=5)
+        assert uploaded == [png.tobytes()]
     finally:
         if node is not None:
             node.destroy_node()

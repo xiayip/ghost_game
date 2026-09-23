@@ -8,7 +8,7 @@ from ament_index_python.packages import get_package_share_directory
 
 
 COMMON_PARAMETER_NAMES = {
-    'image_topic', 'style_prompt_topic', 'result_topic', 'status_topic',
+    'image_topic', 'input_compressed', 'style_prompt_topic', 'result_topic', 'status_topic',
     'model_url_topic', 'submit_service',
     'mode', 'api_base_url', 'model', 'face_limit', 'texture', 'pbr', 'quad',
     'auto_submit', 'auto_interval_sec', 'log_each_image', 'style_enabled',

@@ -1,7 +1,9 @@
 img2mesh:
   ros__parameters:
-    # FLUX publishes one reconstruction-ready portrait for each captured face.
-    image_topic: /ghost/reconstruction/image
+    # Consume FLUX's exact generated PNG bytes; never subscribe to the camera
+    # crop or re-encode the styled image before sending it to Tripo.
+    image_topic: /ghost/reconstruction/image_png
+    input_compressed: true
     style_prompt_topic: /img2mesh/style_prompt
     result_topic: /ghost/reconstruction/mesh_result
     status_topic: /ghost/reconstruction/mesh_status
@@ -16,7 +18,7 @@ img2mesh:
     pbr: true
     quad: false
 
-    # /ghost/reconstruction/image emits once when FLUX succeeds. Each new
+    # /ghost/reconstruction/image_png emits once when FLUX succeeds. Each new
     # image starts one Tripo task; continuous camera frames never reach here.
     auto_submit: true
     auto_interval_sec: 1.0

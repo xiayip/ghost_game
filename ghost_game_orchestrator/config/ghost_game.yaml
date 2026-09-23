@@ -213,10 +213,13 @@ ghost_game_node:
     face_reconstruction_prompt_topic: /ghost/reconstruction/prompt
     face_reconstruction_status_topic: /ghost/reconstruction/status
     face_reconstruction_prompt: >-
-      Create a clean reconstruction-ready cyberpunk operative portrait from
-      this full-head crop. Preserve identity, facial geometry, head pose, hair
-      silhouette, ears, and neck. Remove occlusions and use even neutral
-      lighting on a plain dark background.
+      Transform this full-head crop into an unmistakably cyberpunk operative
+      portrait for 3D reconstruction. Preserve identity, facial geometry, head
+      pose, hair silhouette, ears, and neck. Add visible but face-conforming
+      cybernetic temple and cheek interfaces, thin luminous cyan-magenta
+      circuitry, a translucent HUD lens, and a dark tactical collar. Keep the
+      full face, head, and neck unobstructed with even studio lighting on a
+      plain dark background.
 
     autostart: false
     # TEST SETTINGS - flip these back before the real show:
