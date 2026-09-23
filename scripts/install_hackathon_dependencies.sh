@@ -8,10 +8,15 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 REQUIREMENTS_FILE="${REPO_ROOT}/ghost_tts/requirements.txt"
+GESTURE_REQUIREMENTS_FILE="${REPO_ROOT}/ghost_game_perception/requirements.txt"
 VOICE_NAME="${GHOST_TTS_VOICE:-zh_CN-huayan-medium}"
 
 if [[ ! -f "${REQUIREMENTS_FILE}" ]]; then
   echo "ERROR: requirements file not found: ${REQUIREMENTS_FILE}" >&2
+  exit 1
+fi
+if [[ ! -f "${GESTURE_REQUIREMENTS_FILE}" ]]; then
+  echo "ERROR: gesture requirements file not found: ${GESTURE_REQUIREMENTS_FILE}" >&2
   exit 1
 fi
 
@@ -53,7 +58,7 @@ run_as_root() {
 missing_apt_packages=()
 for package in \
   python3-pip libportaudio2 libpulse0 \
-  python3-opencv python3-numpy python3-requests python3-yaml; do
+  python3-opencv python3-numpy python3-requests python3-yaml python3-matplotlib; do
   if ! dpkg-query -W -f='${Status}' "${package}" 2>/dev/null \
       | grep -q 'ok installed'; then
     missing_apt_packages+=("${package}")
@@ -76,6 +81,28 @@ run_as_target python3 -m pip install \
   --disable-pip-version-check \
   --no-cache-dir \
   -r "${REQUIREMENTS_FILE}"
+
+echo "Installing Ghost gesture runtime for ${TARGET_USER}..."
+# Keep the NumPy/OpenCV stack shared by face detection and FLUX. MediaPipe
+# 1.0.1 supports NumPy 2, while its optional opencv-contrib dependency would
+# replace the OpenCV wheel already tested in this container.
+run_as_target python3 -m pip install \
+  --user \
+  --break-system-packages \
+  --disable-pip-version-check \
+  --no-cache-dir \
+  --no-deps \
+  -r "${GESTURE_REQUIREMENTS_FILE}"
+
+GESTURE_MODEL_DIR="${GHOST_GESTURE_MODEL_DIR:-${TARGET_HOME}/.local/share/ghost_game}"
+GESTURE_MODEL_PATH="${GESTURE_MODEL_DIR}/gesture_recognizer.task"
+GESTURE_MPLCONFIG_DIR="${GHOST_GESTURE_MPLCONFIG_DIR:-/tmp/ghost-game-matplotlib}"
+run_as_target mkdir -p "${GESTURE_MODEL_DIR}"
+run_as_target mkdir -p "${GESTURE_MPLCONFIG_DIR}"
+run_as_target env \
+  PYTHONPATH="${REPO_ROOT}/ghost_game_perception${PYTHONPATH:+:${PYTHONPATH}}" \
+  python3 -m ghost_game_perception.download_model \
+  --output "${GESTURE_MODEL_PATH}"
 
 MODEL_DIR="${GHOST_TTS_MODEL_DIR:-${TARGET_HOME}/.local/share/ghost_tts}"
 MODEL_PATH="${MODEL_DIR}/${VOICE_NAME}.onnx"
@@ -112,6 +139,26 @@ print(f'sounddevice:  {sounddevice.__version__}')
 print(f'Voice model:  {model}')
 PY
 
+run_as_target env \
+  PYTHONPATH="${REPO_ROOT}/ghost_game_perception${PYTHONPATH:+:${PYTHONPATH}}" \
+  MPLCONFIGDIR="${GESTURE_MPLCONFIG_DIR}" \
+  python3 - "${GESTURE_MODEL_PATH}" <<'PY'
+import sys
+
+import cv2
+import mediapipe
+import numpy
+
+from ghost_game_perception.gesture_model import GestureModel
+
+with GestureModel(model_path=sys.argv[1]) as model:
+    model.recognize(numpy.zeros((64, 64, 3), dtype=numpy.uint8))
+
+print(f'MediaPipe:    {mediapipe.__version__}')
+print(f'OpenCV:       {cv2.__version__}')
+print(f'Gesture model: {sys.argv[1]}')
+PY
+
 # The preferred route is the host Pulse/PipeWire Unix socket mounted by
 # .devcontainer/devcontainer.json.  Containers created before that mount was
 # added use the loopback TCP bridge in ghost_tts.engine instead.  Check both
@@ -132,14 +179,14 @@ fi
 
 cat <<EOF
 
-Ghost Game TTS dependencies are ready for user ${TARGET_USER}.
+Ghost Game TTS and gesture dependencies are ready for user ${TARGET_USER}.
 
 Next steps:
   source /opt/ros/jazzy/setup.bash
   cd /workspaces/zephyr-dev/zephyr_ws
   colcon build --symlink-install --packages-select \\
     ghost_game_interfaces ghost_tts flux_image_editor img2mesh ghost_game_orchestrator \
-    ghost_game_face_detection ghost_game
+    ghost_game_perception ghost_game
   source install/setup.bash
   ros2 launch ghost_game ghost_game.launch.py
 EOF

@@ -4,7 +4,7 @@ Validated on 2026-09-22 in `zephyr_dev_24.04-aarch64:latest` with Ubuntu
 24.04, ROS 2 Jazzy, Python 3.12.3, Piper 1.8.0, ONNX Runtime 1.30.0, NumPy
 2.2.6, and sounddevice 0.5.6.
 
-- `ghost_tts`, `ghost_game_orchestrator`, `ghost_game_face_detection`, and
+- `ghost_tts`, `ghost_game_orchestrator`, `ghost_game_perception`, and
   `ghost_game` build successfully with `colcon build --symlink-install`.
 - The 20 model-independent TTS tests and four orchestrator/TTS integration
   tests pass. The Doubao tests cover V3 SSE request construction, PCM decode,

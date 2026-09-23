@@ -1,7 +1,7 @@
 import numpy as np
 from std_msgs.msg import Header
 
-from ghost_game_face_detection.node import NearestFaceNode
+from ghost_game_perception.node import GhostGamePerceptionNode
 
 
 def test_bgr_crop_message_is_contiguous_and_preserves_header():
@@ -9,7 +9,7 @@ def test_bgr_crop_message_is_contiguous_and_preserves_header():
     non_contiguous_crop = source[1:7:2, 2:9:2]
     header = Header(frame_id='camera_color_optical_frame')
 
-    message = NearestFaceNode._bgr_to_image(non_contiguous_crop, header)
+    message = GhostGamePerceptionNode._bgr_to_image(non_contiguous_crop, header)
 
     assert message.header.frame_id == 'camera_color_optical_frame'
     assert message.encoding == 'bgr8'

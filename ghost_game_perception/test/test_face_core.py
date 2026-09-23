@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from ghost_game_face_detection.core import (
+from ghost_game_perception.face_core import (
     FaceBox,
     expand_face_box,
     scale_face_box,

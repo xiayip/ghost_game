@@ -6,16 +6,17 @@ This repository is split into seven ROS 2 packages with one-way ownership:
 | --- | --- |
 | `ghost_game` | Meta package, unified launch, and the YuNet model assets used by the application. It contains no runtime Python logic. |
 | `ghost_game_interfaces` | Shared ROS 2 interfaces, including the cancellable `Speak` action and detailed `MeshResult` progress message. |
-| `ghost_game_face_detection` | RGB image input, nearest-face selection, `vision_msgs` bbox output, and annotated debug images. It does not know the game state. |
+| `ghost_game_perception` | Unified YuNet/MediaPipe perception, face and hand geometry, gesture timing, model tools, and the dry-run action router over one shared RGB subscription. |
 | `ghost_game_orchestrator` | Game state machine, controller/gripper coordination, success flow, and terminal/web monitors. It does not implement face detection. |
 | `ghost_tts` | Switchable offline Piper or cloud Doubao speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
 | `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its prepared output feeds `img2mesh`. |
 | `img2mesh` | Uploads each prepared portrait to Tripo, tracks generation progress, and publishes the completed signed GLB URL to the Web bridge. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
-ghost_game_face_detection, ghost_tts, flux_image_editor, img2mesh,
-ghost_game_interfaces}`.
-Runtime packages share only the interface package and communicate over ROS.
+ghost_game_perception, ghost_tts, flux_image_editor, img2mesh,
+ghost_game_interfaces}`. Face and hand inference now live entirely inside
+`ghost_game_perception`; the orchestrator, Web, reconstruction, TTS, and
+action router remain connected through ROS interfaces.
 
 "Find the Ghost" arm interaction demo. The arm silently picks 6 secret joint
 angles, goes compliant (damping-like), and the audience hand-guesses each
@@ -28,8 +29,8 @@ the wrist camera until the full-head bbox is centered. An optional dance can
 run afterward. Everything runs as one background-thread state machine inside
 `ghost_game_node` - no BT involved.
 
-Step 2 keeps YuNet warm from launch but ignores detections until the success
-pose has been measured and settled. It rejects stale boxes and boxes smaller
+Step 2 switches the unified perception worker from `OFF` to `FACE` only after
+the success pose has been measured and settled. It rejects stale boxes and boxes smaller
 than `face_min_bbox_area_ratio`, requires the configured spatial-stability
 dwell, then centers the target with a 60 Hz direct MIT impedance reference
 stream on bounded `joint5` yaw and `joint4` pitch. Normalized image error
@@ -117,8 +118,8 @@ game lock gains to `success_stiffness`. This gives the load-bearing joints
 enough authority for the display/vision pose without making the interactive
 search phase harder to move by hand.
 
-The meta launch also starts `ghost_game_face_detection` and `ghost_tts` by
-default. The detector
+The meta launch starts `ghost_game_perception` and `ghost_tts` by default. The
+perception node runs its face backend only during configured face phases and
 consumes the Gemini 305 RGB stream and publishes the largest visible face
 (the RGB-only nearest-person proxy) as an official
 `vision_msgs/msg/Detection2DArray` on
@@ -126,13 +127,29 @@ consumes the Gemini 305 RGB stream and publishes the largest visible face
 `enable_face_detection:=false` to run the game without face detection.
 The published bbox expands YuNet's facial region into a full-head crop for
 downstream 3D reconstruction; its four directional margins are configurable
-in `ghost_game_face_detection/config/gemini305.yaml` and are clipped to the
+in `ghost_game_perception/config/ghost_game.yaml` and are clipped to the
 source-image boundary.
 The detector also publishes its annotated JPEG on
 `/nearest_face/debug_image/compressed`; `ghost_game_web_monitor` uses that as
 its default Camera source, so the success screen shows the selected bbox.
 The YuNet ONNX files live in this package's `models/` directory; the launch
 passes that installed directory to the detector through `model_path`.
+
+The `ghost_game_perception` node owns one compressed RGB subscription and a
+single latest-frame worker. The orchestrator switches it between `OFF`,
+`FACE`, and `GESTURE` as the game phase changes, so YuNet and MediaPipe never
+compete for the same frame. It preserves the existing face topics and publishes
+current gesture labels on
+`/gestures/state`, debounced one-shot events on `/gestures/events`, continuous
+open-palm displacement hints on `/gestures/palm_control`, and routed previews
+on `/interaction/requests`. Hand boxes also publish as
+`vision_msgs/msg/Detection2DArray` on `/gestures/detections`. The gesture
+backend is enabled in the unified launch but remains dormant until a
+`GESTURE` phase command arrives. The interaction router
+still defaults to `gesture_dry_run:=true` and has no robot service mapping, so
+recognition alone cannot move the arm. See [GESTURE_INTERACTION.md](GESTURE_INTERACTION.md)
+for label semantics, topic JSON, timing gates, and the explicit procedure for
+wiring a future motion action.
 
 Only one controller, `mit_impedance_controller`, is used for both the free
 and locked behavior per joint: free is just `stiffness=0`. See the module
@@ -177,7 +194,7 @@ source /opt/ros/jazzy/setup.bash
 cd /workspaces/zephyr-dev/zephyr_ws
 colcon build --symlink-install --packages-select \
   ghost_game_interfaces ghost_tts flux_image_editor img2mesh ghost_game_orchestrator \
-  ghost_game_face_detection ghost_game
+  ghost_game_perception ghost_game
 ```
 
 ## Running it: which terminal runs what
@@ -196,10 +213,11 @@ ros2 launch zephyr_arm_bringup real_world.launch.py \
 source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 ros2 launch ghost_game ghost_game.launch.py
 ```
-This starts the orchestrator, face detector, Piper TTS, the lightweight FLUX
+This starts the orchestrator, unified perception node, Piper TTS, the lightweight FLUX
 ROS bridge, and `img2mesh`. Add
 `enable_web_monitor:=true` to start the dashboard in the same launch, or
-`enable_face_detection:=false` when no camera/detector is needed. Use
+`enable_face_detection:=false` to disable YuNet while keeping the shared node,
+or `enable_perception:=false` when no camera perception is needed. Use
 `enable_tts:=false` for silent operation. The TTS launch arguments are
 `tts_backend` (`auto`, `piper`, or `doubao`), `tts_model`, `tts_preset` (`clean`,
 `subtle`, `ghost`, or `machine`), and
@@ -214,6 +232,12 @@ reconstruction error and does not stop the gesture or game flow.
 Set `TRIPO_API_KEY` before launch or place an ignored
 `img2mesh/config/local_api.yaml` file locally. Use
 `enable_mesh_reconstruction:=false` to skip Tripo while testing the robot.
+The default `enable_gestures:=true gesture_dry_run:=true` keeps MediaPipe
+dormant outside gesture phases and starts the safe preview router. Keep dry-run
+enabled until concrete robot actions have been implemented and mapped. Use
+`enable_gesture_router:=false` when running a separately configured router. Set
+`enable_gestures:=false` to avoid loading MediaPipe even when a gesture mode is
+requested.
 
 For development, each functional package can also run independently:
 
@@ -221,8 +245,8 @@ For development, each functional package can also run independently:
 ros2 run ghost_game_orchestrator ghost_game_node --ros-args \
   --params-file $(ros2 pkg prefix ghost_game_orchestrator)/share/ghost_game_orchestrator/config/ghost_game.yaml
 
-ros2 launch ghost_game_face_detection face_detection.launch.py \
-  model_path:=$(ros2 pkg prefix ghost_game)/share/ghost_game/models
+ros2 launch ghost_game_perception perception.launch.py \
+  initial_mode:=FACE face_enabled:=true gesture_enabled:=true
 
 ros2 launch ghost_tts ghost_tts.launch.py audio_device:=pulse preset:=ghost
 
@@ -240,6 +264,11 @@ ros2 action send_goal /ghost/tts/speak \
 
 ros2 run flux_image_editor flux_image_editor_node --ros-args \
   --params-file $(ros2 pkg prefix flux_image_editor)/share/flux_image_editor/config/ghost_game.yaml
+
+ros2 topic pub --once --qos-durability transient_local \
+  /ghost/perception/mode std_msgs/msg/String "{data: 'GESTURE'}"
+ros2 topic echo /gestures/state
+ros2 topic echo /gestures/events
 
 # Legacy compatibility interface; the stop service cancels every job.
 ros2 topic pub --once /ghost/tts/text std_msgs/msg/String \

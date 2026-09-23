@@ -11,8 +11,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     config_file = LaunchConfiguration("config_file")
+    enable_perception = LaunchConfiguration("enable_perception")
+    perception_config = LaunchConfiguration("perception_config")
     enable_face_detection = LaunchConfiguration("enable_face_detection")
-    face_detection_config = LaunchConfiguration("face_detection_config")
     face_detection_model_path = LaunchConfiguration(
         "face_detection_model_path")
     enable_face_reconstruction = LaunchConfiguration(
@@ -30,6 +31,11 @@ def generate_launch_description():
     web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
     web_mesh_status_topic = LaunchConfiguration("web_mesh_status_topic")
     enable_tts = LaunchConfiguration("enable_tts")
+    enable_gestures = LaunchConfiguration("enable_gestures")
+    enable_gesture_router = LaunchConfiguration("enable_gesture_router")
+    gesture_model_path = LaunchConfiguration("gesture_model_path")
+    gesture_dry_run = LaunchConfiguration("gesture_dry_run")
+    gesture_router_config = LaunchConfiguration("gesture_router_config")
     tts_config = LaunchConfiguration("tts_config")
     tts_backend = LaunchConfiguration("tts_backend")
     tts_model = LaunchConfiguration("tts_model")
@@ -49,20 +55,25 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
-                "enable_face_detection",
+                "enable_perception",
                 default_value="true",
-                description="Start the RGB nearest-face detector",
+                description="Start the phase-aware shared-camera perception node",
             ),
             DeclareLaunchArgument(
-                "face_detection_config",
+                "perception_config",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("ghost_game_face_detection"),
+                        FindPackageShare("ghost_game_perception"),
                         "config",
-                        "gemini305.yaml",
+                        "ghost_game.yaml",
                     ]
                 ),
-                description="Face-detection parameter file",
+                description="Unified face/gesture perception parameter file",
+            ),
+            DeclareLaunchArgument(
+                "enable_face_detection",
+                default_value="true",
+                description="Allow the unified perception node to run YuNet",
             ),
             DeclareLaunchArgument(
                 "face_detection_model_path",
@@ -138,6 +149,42 @@ def generate_launch_description():
                 description="Start the selected TTS backend and enable announcements",
             ),
             DeclareLaunchArgument(
+                "enable_gestures",
+                default_value="true",
+                description="Allow the unified perception node to run MediaPipe",
+            ),
+            DeclareLaunchArgument(
+                "enable_gesture_router",
+                default_value="true",
+                description="Start the gesture event-to-action router",
+            ),
+            DeclareLaunchArgument(
+                "gesture_model_path",
+                default_value=str(
+                    Path.home()
+                    / ".local/share/ghost_game/gesture_recognizer.task"
+                ),
+                description="MediaPipe Gesture Recognizer .task model",
+            ),
+            DeclareLaunchArgument(
+                "gesture_dry_run",
+                default_value="true",
+                description=(
+                    "Publish gesture interaction requests without calling robot services"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "gesture_router_config",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("ghost_game_perception"),
+                        "config",
+                        "gesture_router.yaml",
+                    ]
+                ),
+                description="Gesture-to-interaction routing parameter file",
+            ),
+            DeclareLaunchArgument(
                 "tts_backend",
                 default_value="piper",
                 description="TTS backend: auto, piper (offline), or doubao (cloud)",
@@ -203,15 +250,44 @@ def generate_launch_description():
                 condition=IfCondition(enable_tts),
             ),
             Node(
-                package="ghost_game_face_detection",
-                executable="face_detection_node",
-                name="nearest_face",
+                package="ghost_game_perception",
+                executable="perception_node",
+                name="ghost_game_perception",
+                output="screen",
+                additional_env={"MPLCONFIGDIR": "/tmp/ghost-game-matplotlib"},
+                parameters=[
+                    perception_config,
+                    {
+                        "face_enabled": ParameterValue(
+                            enable_face_detection, value_type=bool
+                        ),
+                        "gesture_enabled": ParameterValue(
+                            enable_gestures, value_type=bool
+                        ),
+                        "face_model_path": ParameterValue(
+                            face_detection_model_path, value_type=str
+                        ),
+                        "gesture_model_path": ParameterValue(
+                            gesture_model_path, value_type=str
+                        ),
+                    },
+                ],
+                condition=IfCondition(enable_perception),
+            ),
+            Node(
+                package="ghost_game_perception",
+                executable="gesture_action_router",
+                name="gesture_action_router",
                 output="screen",
                 parameters=[
-                    face_detection_config,
-                    {"model_path": face_detection_model_path},
+                    gesture_router_config,
+                    {
+                        "dry_run": ParameterValue(
+                            gesture_dry_run, value_type=bool
+                        )
+                    },
                 ],
-                condition=IfCondition(enable_face_detection),
+                condition=IfCondition(enable_gesture_router),
             ),
             Node(
                 package="flux_image_editor",

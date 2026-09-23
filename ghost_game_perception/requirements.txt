@@ -1,0 +1,7 @@
+# ARM64 / Python 3.12 runtime tested in zephyr_dev_24.04-aarch64.
+# Install this file with --no-deps through install_hackathon_dependencies.sh:
+# the container already provides NumPy 2 and OpenCV, and pulling MediaPipe's
+# optional opencv-contrib dependency would replace that working vision stack.
+mediapipe==1.0.1
+absl-py==2.5.0
+flatbuffers==25.12.19

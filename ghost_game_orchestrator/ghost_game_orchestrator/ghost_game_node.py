@@ -78,6 +78,7 @@ from .mock_trajectory import (
     quintic_blend,
     trajectory_reference,
 )
+from .perception_mode import perception_mode_for_phase, validate_phase_modes
 
 SWITCH_STRICTNESS_BEST_EFFORT = 1
 
@@ -258,6 +259,7 @@ class GhostGameNode(Node):
         # success_pose_reached -> face_searching/stabilizing/centering ->
         # face_centered -> face_gesture -> dancing/done
         self._phase = 'idle'
+        self._last_perception_command = None
         # Latched when the independently verified success pose is reached.
         # The Web UI consumes this explicit event instead of trying to infer
         # it from short-lived phase names.
@@ -303,6 +305,13 @@ class GhostGameNode(Node):
             self._face_detection_cb, 10, callback_group=self._io_cb_group)
         self._gripper_pub = self.create_publisher(JointState, self.gripper_command_topic, 10)
         self._state_pub = self.create_publisher(String, '~/state', 10)
+        perception_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._perception_mode_pub = self.create_publisher(
+            String, self.perception_mode_topic, perception_qos)
         self._tts_pub = self.create_publisher(String, self.tts_text_topic, 10)
         self._reconstruction_prompt_pub = None
         self._reconstruction_status_sub = None
@@ -486,6 +495,14 @@ class GhostGameNode(Node):
         self.declare_parameter('success_settle_movement', 0.01)
         self.declare_parameter('enable_face_tracking', True)
         self.declare_parameter(
+            'perception_mode_topic', '/ghost/perception/mode')
+        self.declare_parameter('perception_face_phases', [
+            'success_pose_reached', 'face_searching', 'face_stabilizing',
+            'face_centering', 'face_following', 'face_centered',
+        ])
+        self.declare_parameter(
+            'perception_gesture_phases', ['gesture_interaction'])
+        self.declare_parameter(
             'face_detection_topic', '/nearest_face/detection')
         self.declare_parameter(
             'face_camera_info_topic', '/camera/color/camera_info')
@@ -668,6 +685,13 @@ class GhostGameNode(Node):
         self.success_settle_movement = float(
             p('success_settle_movement').value)
         self.enable_face_tracking = bool(p('enable_face_tracking').value)
+        self.perception_mode_topic = str(p('perception_mode_topic').value)
+        self.perception_face_phases, self.perception_gesture_phases = (
+            validate_phase_modes(
+                list(p('perception_face_phases').value),
+                list(p('perception_gesture_phases').value)))
+        if not self.perception_mode_topic.strip():
+            raise RuntimeError('perception_mode_topic must be non-empty')
         self.face_detection_topic = p('face_detection_topic').value
         self.face_camera_info_topic = p('face_camera_info_topic').value
         self.face_detection_max_age = float(
@@ -961,8 +985,9 @@ class GhostGameNode(Node):
 
     def _publish_state(self):
         with self._state_lock:
+            phase = self._phase
             payload = {
-                'phase': self._phase,
+                'phase': phase,
                 'camera_ready': self._camera_ready,
                 'mock_solve_active': self._mock_solve_active,
                 'locked': list(self._locked),
@@ -971,6 +996,20 @@ class GhostGameNode(Node):
             }
             secret_targets = list(self._secret_targets)
             locked = list(self._locked)
+        perception_mode = perception_mode_for_phase(
+            phase, self.perception_face_phases,
+            self.perception_gesture_phases)
+        payload['perception_mode'] = perception_mode
+        perception_command = (phase, perception_mode)
+        if perception_command != self._last_perception_command:
+            command = String()
+            command.data = json.dumps({
+                'mode': perception_mode,
+                'phase': phase,
+                'source': 'ghost_game_node',
+            }, separators=(',', ':'))
+            self._perception_mode_pub.publish(command)
+            self._last_perception_command = perception_command
         if self.publish_debug_distances:
             positions = self._positions_snapshot()
             payload['joints'] = self.joints

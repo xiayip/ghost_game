@@ -1,0 +1,13 @@
+gesture_action_router:
+  ros__parameters:
+    # Preview-only until concrete Trigger backends have been reviewed.
+    dry_run: true
+    events_topic: /gestures/events
+    requests_topic: /interaction/requests
+    status_topic: /interaction/status
+    routes_json: '{"open_palm":"palm_follow","handshake_offer":"handshake","closed_fist":"fist","fist_bump_offer":"fist_bump","pointing":"point_at","wave":"wave","thumb_up":"acknowledge"}'
+    service_map_json: '{}'
+    event_max_age: 0.25
+    min_score: 0.65
+    cooldown_seconds: 1.5
+    service_timeout: 15.0

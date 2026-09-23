@@ -112,6 +112,19 @@ ghost_game_node:
     # phase so old frames cannot trigger a move. The expanded full-head bbox
     # must cover at least 1.5% of the RGB image to reject distant visitors.
     enable_face_tracking: true
+    # The orchestrator emits one latched command whenever the game phase
+    # changes. The unified perception node runs only the selected backend.
+    perception_mode_topic: /ghost/perception/mode
+    perception_face_phases:
+      - success_pose_reached
+      - face_searching
+      - face_stabilizing
+      - face_centering
+      - face_following
+      - face_centered
+    # Reserved for the later hand-interaction state. Until that phase exists,
+    # gestures can be tested by publishing GESTURE manually on the mode topic.
+    perception_gesture_phases: [gesture_interaction]
     face_detection_topic: /nearest_face/detection
     face_camera_info_topic: /camera/color/camera_info
     face_detection_max_age: 1.0
