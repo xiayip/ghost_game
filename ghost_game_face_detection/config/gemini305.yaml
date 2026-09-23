@@ -6,6 +6,8 @@ nearest_face:
     image_topic: /camera/color/image_raw/compressed
     input_compressed: true
     detection_topic: /nearest_face/detection
+    # Original face region + persistent geometric ID for wrist following.
+    tracking_topic: /nearest_face/tracking
     debug_image_topic: /nearest_face/debug_image
     debug_compressed_topic: /nearest_face/debug_image/compressed
     model_path: ''
@@ -19,9 +21,14 @@ nearest_face:
     bbox_expand_right_ratio: 0.35
     bbox_expand_top_ratio: 0.55
     bbox_expand_bottom_ratio: 0.30
-    max_processing_rate: 15.0
+    max_processing_rate: 30.0
+    max_frame_age: 0.15
+    track_lost_timeout: 0.4
     # Half-resolution YuNet inference; detections are mapped back to the full
     # 848x530 source before bbox expansion/publication.
     detector_input_width: 424
     publish_debug_image: true
-    jpeg_quality: 85
+    # Debug runs in a separate bounded worker only when subscribed.
+    debug_rate_hz: 5.0
+    debug_max_width: 640
+    jpeg_quality: 75

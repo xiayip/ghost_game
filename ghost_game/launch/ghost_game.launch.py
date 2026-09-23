@@ -17,6 +17,7 @@ def generate_launch_description():
         "face_detection_model_path")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
     enable_tts = LaunchConfiguration("enable_tts")
+    continuous_face_follow = LaunchConfiguration("continuous_face_follow")
     tts_config = LaunchConfiguration("tts_config")
     tts_model = LaunchConfiguration("tts_model")
     tts_preset = LaunchConfiguration("tts_preset")
@@ -24,6 +25,10 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "continuous_face_follow", default_value="false",
+                description="Keep following in Stage 2 until abort/home instead of finishing after the dwell",
+            ),
             DeclareLaunchArgument(
                 "config_file",
                 default_value=PathJoinSubstitution(
@@ -99,6 +104,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     config_file,
+                    {"face_continuous_follow": ParameterValue(continuous_face_follow, value_type=bool)},
                     {
                         "tts_enabled": ParameterValue(
                             enable_tts, value_type=bool
