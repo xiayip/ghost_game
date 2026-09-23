@@ -21,6 +21,7 @@
   <depend>vision_msgs</depend>
   <depend>ghost_game_interfaces</depend>
   <depend>ament_index_python</depend>
+  <exec_depend>python3-numpy</exec_depend>
 
   <!-- For the web dashboard's optional 3D robot model: expands the real
        arm URDF (xacro) and serves its meshes from zephyr_arm_description's

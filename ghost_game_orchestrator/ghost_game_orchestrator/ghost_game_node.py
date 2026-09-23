@@ -20,7 +20,9 @@ Flow:
      gesture from the captured pose while retaining direct impedance control.
      In parallel, submit the detector's latest expanded full-head crop to the
      FLUX preprocessing service for the later image-to-3D stage.
-  7. Optionally switch to the position-control chain and play a short
+  7. While the mesh builds, mirror an open palm's aligned depth displacement
+     with a bounded camera-axis push/pull motion in direct impedance mode.
+  8. Optionally switch to the position-control chain and play a short
      trajectory ("dance").
 
 Stage transitions send cancellable plain-text Actions to ghost_tts. TTS
@@ -40,6 +42,7 @@ import random
 import threading
 import time
 
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -77,6 +80,12 @@ from .mock_trajectory import (
     minimum_quintic_duration,
     quintic_blend,
     trajectory_reference,
+)
+from .palm_interaction import (
+    CameraAxisServo,
+    PalmDepthFilter,
+    bounded_joint_servo_target,
+    palm_center_error_x,
 )
 from .perception_mode import perception_mode_for_phase, validate_phase_modes
 
@@ -152,6 +161,10 @@ class GhostGameNode(Node):
         self.face_pitch_index = self.joints.index(self.face_pitch_joint)
         self.face_gesture_roll_index = self.joints.index(
             self.face_gesture_roll_joint)
+        if (self.gesture_yaw_max_offset >
+                self.gesture_joint_max_offsets[self.face_yaw_index]):
+            raise RuntimeError(
+                'gesture_yaw_max_offset must fit inside the yaw joint offset')
         if self.face_yaw_index == self.face_pitch_index:
             raise RuntimeError('face yaw and pitch joints must be different')
         if self.face_gesture_roll_index in (
@@ -257,7 +270,7 @@ class GhostGameNode(Node):
         self._state_lock = threading.Lock()
         # idle -> searching -> all_found -> success_move ->
         # success_pose_reached -> face_searching/stabilizing/centering ->
-        # face_centered -> face_gesture -> dancing/done
+        # face_centered -> face_gesture -> gesture_interaction -> dancing/done
         self._phase = 'idle'
         self._last_perception_command = None
         # Latched when the independently verified success pose is reached.
@@ -273,6 +286,7 @@ class GhostGameNode(Node):
         self._go_home_requested = False
         self._mock_solve_requested = False
         self._mock_solve_active = False
+        self._mock_palm_transition_pending = False
         self._running = False
 
         self._joint_positions = {}    # name -> latest position
@@ -288,6 +302,41 @@ class GhostGameNode(Node):
         self._reconstruction_request_id = ''
         self._reconstruction_state = self._new_reconstruction_state()
         self._reconstruction_state['enabled'] = self.enable_face_reconstruction
+        self._palm_lock = threading.Lock()
+        self._latest_palm_control = None
+        self._latest_palm_received_at = 0.0
+        self._mesh_lock = threading.Lock()
+        self._mesh_state = {
+            'status': 'idle', 'progress': 0, 'request_id': '',
+            'received_at': 0.0,
+        }
+        self._palm_game_state = {
+            'active': False,
+            'hand_detected': False,
+            'distance_m': None,
+            'offset_m': 0.0,
+            'control_active': False,
+            'label': 'unknown',
+            'palm_open': False,
+            'palm_source': 'none',
+            'distance_valid': False,
+            'control_reason': 'inactive',
+            'depth_reason': '',
+            'sample_age_ms': None,
+            'depth_age_ms': None,
+            'depth_skew_ms': None,
+            'inference_ms': None,
+            'source_age_ms': None,
+            'baseline_m': None,
+            'filtered_m': None,
+            'tracking_error_rad': 0.0,
+            'command_delta_rad': 0.0,
+            'yaw_tracking': False,
+            'yaw_error': None,
+            'yaw_offset_rad': 0.0,
+            'mesh_status': 'idle',
+            'mesh_progress': 0,
+        }
 
         # -- Callback groups: keep service/action calls off the subscriber/timer group --
         self._io_cb_group = ReentrantCallbackGroup()
@@ -303,6 +352,10 @@ class GhostGameNode(Node):
         self._face_detection_sub = self.create_subscription(
             Detection2DArray, self.face_detection_topic,
             self._face_detection_cb, 10, callback_group=self._io_cb_group)
+        self._palm_control_sub = self.create_subscription(
+            String, self.gesture_palm_control_topic,
+            self._palm_control_cb, qos_profile_sensor_data,
+            callback_group=self._io_cb_group)
         self._gripper_pub = self.create_publisher(JointState, self.gripper_command_topic, 10)
         self._state_pub = self.create_publisher(String, '~/state', 10)
         perception_qos = QoSProfile(
@@ -327,6 +380,15 @@ class GhostGameNode(Node):
                 String, self.face_reconstruction_status_topic,
                 self._face_reconstruction_status_cb, reconstruction_qos,
                 callback_group=self._io_cb_group)
+        mesh_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._mesh_status_sub = self.create_subscription(
+            String, self.gesture_mesh_status_topic,
+            self._mesh_status_cb, mesh_qos,
+            callback_group=self._io_cb_group)
         self._state_timer = self.create_timer(0.2, self._publish_state, callback_group=self._io_cb_group)
 
         # -- Clients --
@@ -359,6 +421,10 @@ class GhostGameNode(Node):
         self.create_service(Trigger, '~/start', self._on_start, callback_group=self._io_cb_group)
         self.create_service(
             Trigger, '~/mock_solve', self._on_mock_solve,
+            callback_group=self._io_cb_group)
+        self.create_service(
+            Trigger, '~/mock_palm_interaction',
+            self._on_mock_palm_interaction,
             callback_group=self._io_cb_group)
         self.create_service(Trigger, '~/abort', self._on_abort, callback_group=self._io_cb_group)
         self.create_service(Trigger, '~/return_home', self._on_return_home, callback_group=self._io_cb_group)
@@ -477,7 +543,7 @@ class GhostGameNode(Node):
         # This is ramped only after the game has been solved, so it does not
         # change the interaction feel while visitors search for fragments.
         self.declare_parameter(
-            'success_stiffness', [30.0, 30.0, 35.0, 18.0, 12.0, 12.0])
+            'success_stiffness', [30.0, 30.0, 35.0, 18.0, 18.0, 12.0])
         # The impedance JTC can finish with a small static load-dependent
         # residual and report GOAL_TOLERANCE_VIOLATED even though the arm has
         # safely reached the intended display pose. Validate the measured,
@@ -576,8 +642,52 @@ class GhostGameNode(Node):
             'face_reconstruction_prompt',
             'Create a clean reconstruction-ready cyberpunk operative portrait '
             'from this full-head crop. Preserve identity, facial geometry, '
-            'head pose, hair silhouette, ears, and neck. Remove occlusions and '
-            'use even neutral lighting on a plain dark background.')
+            'head pose, hair silhouette, ears, and neck. Follow a strict source-only '
+            'accessory policy: do not add glasses, sunglasses, goggles, visors, '
+            'earrings, ear studs, piercings, jewelry, hats, headsets, masks, facial '
+            'hardware, cybernetic implants, tattoos, or any other accessory or body '
+            'modification unless that exact item is clearly visible in the source. '
+            'If it is absent or uncertain, render none. Never infer accessories from '
+            'the cyberpunk theme. Preserve clearly visible existing items exactly; '
+            'do not redesign, replace, duplicate, or embellish them. Express the '
+            'subtle cyberpunk style only through color grading, lighting, background, '
+            'clothing texture, and non-structural surface treatment. Keep the face '
+            'unobstructed and use even neutral lighting on a plain dark background.'
+        )
+        # While FLUX and Tripo build the visitor model, an open palm controls
+        # a short camera-axis push/pull game using aligned Orbbec depth.
+        self.declare_parameter('enable_gesture_interaction', True)
+        self.declare_parameter(
+            'gesture_palm_control_topic', '/gestures/palm_control')
+        self.declare_parameter(
+            'gesture_mesh_status_topic', '/ghost/reconstruction/mesh_status')
+        self.declare_parameter('gesture_interaction_min_duration', 8.0)
+        self.declare_parameter('gesture_interaction_max_duration', 90.0)
+        self.declare_parameter('gesture_finish_on_mesh_ready', True)
+        self.declare_parameter('gesture_control_rate_hz', 80.0)
+        self.declare_parameter('gesture_depth_deadzone', 0.010)
+        self.declare_parameter('gesture_depth_gain', 1.0)
+        self.declare_parameter('gesture_max_offset', 0.08)
+        self.declare_parameter('gesture_depth_smoothing_time', 0.04)
+        self.declare_parameter('gesture_sample_timeout', 0.20)
+        self.declare_parameter('gesture_reacquire_timeout', 1.00)
+        self.declare_parameter('gesture_position_gain', 6.5)
+        self.declare_parameter('gesture_max_linear_speed', 0.22)
+        self.declare_parameter('gesture_max_joint_speed', 0.80)
+        self.declare_parameter('gesture_tracking_error_limit', 0.18)
+        self.declare_parameter('gesture_yaw_enabled', True)
+        self.declare_parameter('gesture_yaw_gain', 2.50)
+        self.declare_parameter('gesture_yaw_max_speed', 1.00)
+        self.declare_parameter('gesture_yaw_max_offset', 0.45)
+        self.declare_parameter('gesture_yaw_deadband', 0.08)
+        self.declare_parameter(
+            'gesture_joint_max_offsets', [0.12, 0.35, 0.35, 0.35, 0.45, 0.18])
+        self.declare_parameter(
+            'tts_gesture_interaction_text',
+            '特工档案正在重构。张开手掌，向我推进或撤离，测试幽灵镜像协议。')
+        self.declare_parameter(
+            'tts_model_ready_text',
+            '神经几何体已经生成。新的壳，正在显现。')
         self.declare_parameter('autostart', False)
         self.declare_parameter('enable_dance', True)
         self.declare_parameter('publish_debug_distances', True)
@@ -777,6 +887,95 @@ class GhostGameNode(Node):
                 self.face_reconstruction_prompt.strip())):
             raise RuntimeError(
                 'face reconstruction topics and prompt must be non-empty')
+        self.enable_gesture_interaction = bool(
+            p('enable_gesture_interaction').value)
+        self.gesture_palm_control_topic = str(
+            p('gesture_palm_control_topic').value)
+        self.gesture_mesh_status_topic = str(
+            p('gesture_mesh_status_topic').value)
+        self.gesture_interaction_min_duration = float(
+            p('gesture_interaction_min_duration').value)
+        self.gesture_interaction_max_duration = float(
+            p('gesture_interaction_max_duration').value)
+        self.gesture_finish_on_mesh_ready = bool(
+            p('gesture_finish_on_mesh_ready').value)
+        self.gesture_control_rate_hz = float(
+            p('gesture_control_rate_hz').value)
+        self.gesture_depth_deadzone = float(
+            p('gesture_depth_deadzone').value)
+        self.gesture_depth_gain = float(p('gesture_depth_gain').value)
+        self.gesture_max_offset = float(p('gesture_max_offset').value)
+        self.gesture_depth_smoothing_time = float(
+            p('gesture_depth_smoothing_time').value)
+        self.gesture_sample_timeout = float(
+            p('gesture_sample_timeout').value)
+        self.gesture_reacquire_timeout = float(
+            p('gesture_reacquire_timeout').value)
+        self.gesture_position_gain = float(
+            p('gesture_position_gain').value)
+        self.gesture_max_linear_speed = float(
+            p('gesture_max_linear_speed').value)
+        self.gesture_max_joint_speed = float(
+            p('gesture_max_joint_speed').value)
+        self.gesture_tracking_error_limit = float(
+            p('gesture_tracking_error_limit').value)
+        self.gesture_yaw_enabled = bool(p('gesture_yaw_enabled').value)
+        self.gesture_yaw_gain = float(p('gesture_yaw_gain').value)
+        self.gesture_yaw_max_speed = float(
+            p('gesture_yaw_max_speed').value)
+        self.gesture_yaw_max_offset = float(
+            p('gesture_yaw_max_offset').value)
+        self.gesture_yaw_deadband = float(p('gesture_yaw_deadband').value)
+        self.gesture_joint_max_offsets = list(
+            p('gesture_joint_max_offsets').value)
+        self.tts_gesture_interaction_text = str(
+            p('tts_gesture_interaction_text').value)
+        self.tts_model_ready_text = str(p('tts_model_ready_text').value)
+        gesture_positive = (
+            self.gesture_interaction_min_duration,
+            self.gesture_interaction_max_duration,
+            self.gesture_control_rate_hz,
+            self.gesture_depth_deadzone,
+            self.gesture_depth_gain,
+            self.gesture_max_offset,
+            self.gesture_depth_smoothing_time,
+            self.gesture_sample_timeout,
+            self.gesture_reacquire_timeout,
+            self.gesture_position_gain,
+            self.gesture_max_linear_speed,
+            self.gesture_max_joint_speed,
+            self.gesture_tracking_error_limit,
+            self.gesture_yaw_gain,
+            self.gesture_yaw_max_speed,
+            self.gesture_yaw_max_offset,
+        )
+        if any(not math.isfinite(value) or value <= 0.0
+               for value in gesture_positive):
+            raise RuntimeError(
+                'gesture interaction timing, gain, and limits must be positive')
+        if (self.gesture_interaction_min_duration >
+                self.gesture_interaction_max_duration):
+            raise RuntimeError(
+                'gesture interaction minimum duration must not exceed maximum')
+        if self.gesture_reacquire_timeout < self.gesture_sample_timeout:
+            raise RuntimeError(
+                'gesture_reacquire_timeout must be at least '
+                'gesture_sample_timeout')
+        if (not math.isfinite(self.gesture_yaw_deadband) or
+                not 0.0 <= self.gesture_yaw_deadband < 1.0):
+            raise RuntimeError(
+                'gesture_yaw_deadband must be finite and in [0, 1)')
+        if (len(self.gesture_joint_max_offsets) != len(self.joints) or
+                any(not math.isfinite(value) or value <= 0.0
+                    for value in self.gesture_joint_max_offsets)):
+            raise RuntimeError(
+                'gesture_joint_max_offsets must contain one positive value per joint')
+        if self.enable_gesture_interaction and not all((
+                self.gesture_palm_control_topic.strip(),
+                self.gesture_mesh_status_topic.strip(),
+                self.tts_gesture_interaction_text.strip())):
+            raise RuntimeError(
+                'gesture interaction topics and TTS cue must be non-empty')
         self.autostart = bool(p('autostart').value)
         self.enable_dance = bool(p('enable_dance').value)
         self.publish_debug_distances = bool(p('publish_debug_distances').value)
@@ -844,6 +1043,42 @@ class GhostGameNode(Node):
             sample = None
         with self._face_lock:
             self._latest_face = sample
+
+    def _palm_control_cb(self, message):
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            self.get_logger().warn(
+                'Ignoring malformed palm-control JSON',
+                throttle_duration_sec=2.0)
+            return
+        if not isinstance(payload, dict):
+            return
+        with self._palm_lock:
+            self._latest_palm_control = payload
+            self._latest_palm_received_at = time.monotonic()
+
+    def _mesh_status_cb(self, message):
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            self.get_logger().warn(
+                'Ignoring malformed mesh-status JSON',
+                throttle_duration_sec=2.0)
+            return
+        if not isinstance(payload, dict) or not payload.get('status'):
+            return
+        try:
+            progress = max(0, min(100, int(payload.get('progress', 0) or 0)))
+        except (TypeError, ValueError):
+            return
+        with self._mesh_lock:
+            self._mesh_state = {
+                'status': str(payload['status']),
+                'progress': progress,
+                'request_id': str(payload.get('request_id', '')),
+                'received_at': time.monotonic(),
+            }
 
     @staticmethod
     def _new_reconstruction_state():
@@ -924,6 +1159,11 @@ class GhostGameNode(Node):
                 'enabled': True,
                 'status': 'submitted',
             })
+        with self._mesh_lock:
+            self._mesh_state = {
+                'status': 'idle', 'progress': 0, 'request_id': '',
+                'received_at': time.monotonic(),
+            }
         self._reconstruction_prompt_pub.publish(String(
             data=self.face_reconstruction_prompt.strip()))
         self.get_logger().info(
@@ -990,6 +1230,8 @@ class GhostGameNode(Node):
                 'phase': phase,
                 'camera_ready': self._camera_ready,
                 'mock_solve_active': self._mock_solve_active,
+                'mock_palm_transition_pending':
+                    self._mock_palm_transition_pending,
                 'locked': list(self._locked),
                 'found_count': sum(self._locked),
                 'total': len(self.joints),
@@ -1051,6 +1293,8 @@ class GhostGameNode(Node):
             }
         with self._reconstruction_lock:
             payload['reconstruction'] = dict(self._reconstruction_state)
+        with self._palm_lock:
+            payload['palm_interaction'] = dict(self._palm_game_state)
         msg = String()
         msg.data = json.dumps(payload)
         self._state_pub.publish(msg)
@@ -1069,6 +1313,7 @@ class GhostGameNode(Node):
             self._abort_requested = False
             self._mock_solve_requested = False
             self._mock_solve_active = False
+            self._mock_palm_transition_pending = False
         threading.Thread(target=self._start_round, daemon=True).start()
         response.success = True
         response.message = 'Round started'
@@ -1092,15 +1337,61 @@ class GhostGameNode(Node):
         response.message = 'Mock trajectory queued for the secret pose'
         return response
 
+    def _on_mock_palm_interaction(self, request, response):
+        """Preempt any game stage, move to success pose, then enter palm play."""
+        del request
+        with self._state_lock:
+            if self._mock_palm_transition_pending:
+                response.success = True
+                response.message = 'Direct palm interaction is already queued'
+                return response
+            if self._running:
+                previous_phase = self._phase
+                self._mock_palm_transition_pending = True
+                self._abort_requested = True
+                self._go_home_requested = False
+                self._camera_ready = False
+                queue_after_preemption = True
+            else:
+                self._running = True
+                self._abort_requested = False
+                self._go_home_requested = False
+                self._mock_solve_requested = False
+                self._mock_solve_active = False
+                self._mock_palm_transition_pending = False
+                self._camera_ready = False
+                queue_after_preemption = False
+        if queue_after_preemption:
+            # Cancel a success/inspection/home JTC immediately. Direct loops
+            # observe _abort_requested on their next tick.
+            self._cancel_active_trajectory()
+            threading.Thread(
+                target=self._start_mock_palm_after_preemption,
+                daemon=True,
+            ).start()
+            response.success = True
+            response.message = (
+                'Current stage is stopping; success-pose palm interaction queued '
+                f'(phase={previous_phase})')
+            return response
+        threading.Thread(
+            target=self._start_mock_palm_interaction, daemon=True).start()
+        response.success = True
+        response.message = (
+            'Moving to success pose before direct palm interaction')
+        return response
+
     def _on_abort(self, request, response):
         with self._state_lock:
             self._abort_requested = True
+            self._mock_palm_transition_pending = False
         response.success = True
         response.message = 'Abort requested'
         return response
 
     def _on_return_home(self, request, response):
         with self._state_lock:
+            self._mock_palm_transition_pending = False
             if not self._running:
                 self._running = True
                 start_new_thread = True
@@ -1133,6 +1424,75 @@ class GhostGameNode(Node):
         finally:
             with self._state_lock:
                 self._running = False
+
+    def _start_mock_palm_interaction(self):
+        """Move to the show pose, then run only the gesture stage."""
+        try:
+            if not self._set_impedance_params(
+                    **{'gravity_compensation.factor': 1.0}):
+                self._safe_abort()
+                return
+            if not self._move_to_success_pose():
+                request = self._face_control_request()
+                if request == 'home':
+                    self._return_home()
+                else:
+                    self._safe_abort()
+                return
+            request = self._face_control_request()
+            if request == 'abort':
+                self._safe_abort()
+                return
+            if request == 'home':
+                self._return_home()
+                return
+            with self._state_lock:
+                self._camera_ready = True
+            result = self._run_palm_interaction(finish_on_mesh_ready=False)
+            if result == 'abort':
+                self._safe_abort()
+            elif result == 'home':
+                self._return_home()
+            elif result == 'failed':
+                self._safe_abort()
+            else:
+                with self._state_lock:
+                    self._phase = 'done'
+                    self._camera_ready = False
+                self.get_logger().info(
+                    'Direct palm-interaction test complete')
+        except Exception:
+            self.get_logger().error(
+                'direct palm interaction crashed', exc_info=True)
+            self._safe_abort()
+        finally:
+            with self._state_lock:
+                self._running = False
+
+    def _start_mock_palm_after_preemption(self):
+        """Wait for the current game thread to release control, then start."""
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            with self._state_lock:
+                if not self._mock_palm_transition_pending:
+                    return
+                if not self._running:
+                    self._running = True
+                    self._abort_requested = False
+                    self._go_home_requested = False
+                    self._mock_solve_requested = False
+                    self._mock_solve_active = False
+                    self._mock_palm_transition_pending = False
+                    self._camera_ready = False
+                    break
+            time.sleep(0.02)
+        else:
+            with self._state_lock:
+                self._mock_palm_transition_pending = False
+            self.get_logger().error(
+                'Timed out preempting the current stage for palm interaction')
+            return
+        self._start_mock_palm_interaction()
 
     # ------------------------------------------------------------------ #
     #  Blocking helpers (run only from the background game thread)
@@ -1426,7 +1786,9 @@ class GhostGameNode(Node):
         self._publish_impedance_command(positions)
         if not self._switch_controllers(
                 activate=[self.impedance_controller],
-                deactivate=[self.impedance_trajectory_controller]):
+                deactivate=[self.impedance_trajectory_controller,
+                            self.position_adapter_controller,
+                            self.position_trajectory_controller]):
             self.get_logger().error(
                 'Failed to enter direct impedance mode for face tracking')
             return False
@@ -1864,6 +2226,316 @@ class GhostGameNode(Node):
         self.get_logger().error('Face inspection JTC trajectory timed out')
         return 'failed'
 
+    def _run_palm_interaction(self, finish_on_mesh_ready=None):
+        """Mirror open-palm depth motion around the current arm pose."""
+        if finish_on_mesh_ready is None:
+            finish_on_mesh_ready = self.gesture_finish_on_mesh_ready
+        anchor = self._positions_snapshot()
+        if any(position is None for position in anchor):
+            self.get_logger().error(
+                'Lost /joint_states before palm interaction')
+            return 'failed'
+        anchor = list(anchor)
+        try:
+            servo = CameraAxisServo(
+                anchor,
+                self.joint_lower_limits,
+                self.joint_upper_limits,
+                self.gesture_joint_max_offsets,
+                max_linear_speed=self.gesture_max_linear_speed,
+                max_joint_speed=self.gesture_max_joint_speed,
+                position_gain=self.gesture_position_gain,
+            )
+            depth_filter = PalmDepthFilter(
+                deadzone=self.gesture_depth_deadzone,
+                gain=self.gesture_depth_gain,
+                max_offset=self.gesture_max_offset,
+                smoothing_time=self.gesture_depth_smoothing_time,
+                sample_timeout=self.gesture_sample_timeout,
+                reacquire_timeout=self.gesture_reacquire_timeout,
+            )
+        except ValueError as error:
+            self.get_logger().error(
+                f'Palm interaction configuration is invalid: {error}')
+            return 'failed'
+
+        if not self._enter_face_servo_mode(anchor):
+            return 'failed'
+        # Face inspection used the same success-phase gains, but set them
+        # explicitly so this stage also works when the inspection gesture is
+        # disabled or a previous tuning session changed controller parameters.
+        if not self._set_impedance_params(
+                stiffness=self.success_stiffness,
+                damping_coefficients=self.locked_damping,
+                **{'gravity_compensation.factor': 1.0}):
+            return 'failed'
+        request = self._prepare_gripper_for_palm_interaction()
+        if request is not None:
+            return request
+        with self._state_lock:
+            self._stiffness_state = list(self.success_stiffness)
+            self._phase = 'gesture_interaction'
+        with self._palm_lock:
+            self._latest_palm_control = None
+            self._latest_palm_received_at = 0.0
+            self._palm_game_state = {
+                'active': True,
+                'hand_detected': False,
+                'distance_m': None,
+                'offset_m': 0.0,
+                'control_active': False,
+                'label': 'unknown',
+                'palm_open': False,
+                'palm_source': 'none',
+                'distance_valid': False,
+                'control_reason': 'waiting_for_open_palm',
+                'depth_reason': '',
+                'sample_age_ms': None,
+                'depth_age_ms': None,
+                'depth_skew_ms': None,
+                'inference_ms': None,
+                'source_age_ms': None,
+                'baseline_m': None,
+                'filtered_m': None,
+                'tracking_error_rad': 0.0,
+                'command_delta_rad': 0.0,
+                'yaw_tracking': False,
+                'yaw_error': None,
+                'yaw_offset_rad': 0.0,
+                'mesh_status': 'idle',
+                'mesh_progress': 0,
+            }
+        self._speak(self.tts_gesture_interaction_text)
+        self.get_logger().info(
+            'Palm push/pull interaction active: open_palm + aligned depth, '
+            f'travel=+/-{self.gesture_max_offset:.3f} m, '
+            f'speed<={self.gesture_max_linear_speed:.3f} m/s, '
+            f'J5 palm yaw={self.gesture_yaw_enabled}, '
+            f'gain={self.gesture_yaw_gain:.2f}, '
+            f'speed<={self.gesture_yaw_max_speed:.2f} rad/s')
+
+        command = list(anchor)
+        pose_reference = list(anchor)
+        yaw_target = anchor[self.face_yaw_index]
+        servo_offset = 0.0
+        period = 1.0 / self.gesture_control_rate_hz
+        started_at = time.monotonic()
+        previous_tick = started_at
+        next_tick = started_at
+        finish_reason = 'timeout'
+        with self._mesh_lock:
+            mesh = dict(self._mesh_state)
+
+        while True:
+            request = self._face_control_request()
+            if request is not None:
+                finish_reason = request
+                break
+            now = time.monotonic()
+            elapsed = now - started_at
+            with self._mesh_lock:
+                mesh = dict(self._mesh_state)
+            with self._reconstruction_lock:
+                reconstruction_status = self._reconstruction_state['status']
+            if (elapsed >= self.gesture_interaction_min_duration and
+                    finish_on_mesh_ready and
+                    mesh['status'] in (
+                        'success', 'error', 'failed', 'cancelled')):
+                finish_reason = (
+                    'model_ready' if mesh['status'] == 'success'
+                    else 'model_failed')
+                break
+            if (elapsed >= self.gesture_interaction_min_duration and
+                    finish_on_mesh_ready and
+                    reconstruction_status == 'error'):
+                finish_reason = 'model_failed'
+                break
+            if elapsed >= self.gesture_interaction_max_duration:
+                break
+
+            dt = min(max(now - previous_tick, 0.0), 2.0 * period)
+            previous_tick = now
+            with self._palm_lock:
+                payload = self._latest_palm_control
+                received_at = self._latest_palm_received_at
+            target_offset = depth_filter.update(payload, received_at, now)
+            hand_detected = target_offset is not None
+            sample_age_ms = (
+                None if received_at <= 0.0 else
+                max(0.0, (now - received_at) * 1000.0))
+            diagnostic_payload = payload if isinstance(payload, dict) else {}
+            yaw_error = palm_center_error_x(diagnostic_payload)
+            yaw_visible = (
+                self.gesture_yaw_enabled and
+                yaw_error is not None and
+                received_at > 0.0 and
+                now - received_at <= self.gesture_sample_timeout)
+            depth_age_ms = (
+                float(diagnostic_payload['depth_age_sec']) * 1000.0
+                if isinstance(diagnostic_payload.get('depth_age_sec'), (int, float))
+                else None)
+            depth_skew_ms = (
+                float(diagnostic_payload['depth_skew_sec']) * 1000.0
+                if isinstance(diagnostic_payload.get('depth_skew_sec'), (int, float))
+                else None)
+            distance = None
+            if hand_detected:
+                try:
+                    distance = float(payload['distance_m'])
+                except (KeyError, TypeError, ValueError):
+                    hand_detected = False
+                    target_offset = None
+            if target_offset is not None:
+                servo_offset = target_offset
+            if yaw_visible and dt > 0.0:
+                try:
+                    yaw_target = bounded_joint_servo_target(
+                        current_target=yaw_target,
+                        reference=anchor[self.face_yaw_index],
+                        lower_limit=self.joint_lower_limits[
+                            self.face_yaw_index],
+                        upper_limit=self.joint_upper_limits[
+                            self.face_yaw_index],
+                        error=yaw_error,
+                        gain=self.gesture_yaw_gain,
+                        max_speed=self.gesture_yaw_max_speed,
+                        dt=dt,
+                        direction=self.face_yaw_direction,
+                        max_offset=self.gesture_yaw_max_offset,
+                        deadband=self.gesture_yaw_deadband,
+                        joint_margin=self.face_joint_margin,
+                    )
+                except ValueError as error:
+                    self.get_logger().error(
+                        f'Palm yaw servo failed: {error}')
+                    finish_reason = 'failed'
+                    break
+                pose_reference[self.face_yaw_index] = yaw_target
+
+            measured = self._positions_snapshot()
+            if any(position is None for position in measured):
+                self.get_logger().error(
+                    'Lost /joint_states during palm interaction')
+                finish_reason = 'failed'
+                break
+            tracking_error = max(
+                abs(measured[index] - command[index])
+                for index in range(len(command)))
+            command_delta = 0.0
+            if tracking_error > self.gesture_tracking_error_limit:
+                # A hand or obstacle can block this compliant game. Rebase the
+                # command at the measured pose instead of building more error.
+                command = list(measured)
+                self._publish_impedance_command(command)
+                self.get_logger().warn(
+                    'Palm servo tracking error exceeded limit; holding the '
+                    'measured pose before resuming',
+                    throttle_duration_sec=1.0)
+            elif (hand_detected or yaw_visible) and dt > 0.0:
+                try:
+                    step = servo.step(
+                        command, servo_offset, dt,
+                        reference=pose_reference,
+                        controlled_joint_index=(
+                            self.face_yaw_index
+                            if self.gesture_yaw_enabled else None),
+                    )
+                except (ValueError, np.linalg.LinAlgError) as error:
+                    self.get_logger().error(
+                        f'Palm Cartesian servo failed: {error}')
+                    finish_reason = 'failed'
+                    break
+                previous_command = command
+                command = step.positions
+                command_delta = max(
+                    abs(command[index] - previous_command[index])
+                    for index in range(len(command)))
+                self._publish_impedance_command(command, step.velocities)
+            else:
+                # A lost/closed hand freezes the last equilibrium immediately.
+                self._publish_impedance_command(command)
+
+            if hand_detected:
+                self.get_logger().info(
+                    'Palm servo accepted: '
+                    f'distance={distance:.3f} m, '
+                    f'baseline={depth_filter.baseline:.3f} m, '
+                    f'offset={target_offset:+.3f} m, '
+                    f'joint_step={command_delta:.5f} rad, '
+                    f'tracking_error={tracking_error:.3f} rad, '
+                    f'input_age={sample_age_ms:.1f} ms, '
+                    f'depth_age={depth_age_ms} ms, '
+                    f'depth_skew={depth_skew_ms} ms',
+                    throttle_duration_sec=1.0)
+            else:
+                self.get_logger().warn(
+                    'Palm servo waiting: '
+                    f'reason={depth_filter.last_reason}, '
+                    f'label={diagnostic_payload.get("label", "unknown")}, '
+                    f'active={diagnostic_payload.get("active", False)}, '
+                    'distance_valid='
+                    f'{diagnostic_payload.get("distance_valid", False)}, '
+                    f'sample_age_ms={sample_age_ms}, '
+                    f'depth_age_ms={depth_age_ms}, '
+                    f'depth_skew_ms={depth_skew_ms}',
+                    throttle_duration_sec=2.0)
+
+            with self._palm_lock:
+                self._palm_game_state = {
+                    'active': True,
+                    'hand_detected': hand_detected,
+                    'distance_m': distance,
+                    'offset_m': 0.0 if target_offset is None else target_offset,
+                    'control_active': diagnostic_payload.get('active') is True,
+                    'label': str(diagnostic_payload.get('label', 'unknown')),
+                    'palm_open': diagnostic_payload.get('palm_open') is True,
+                    'palm_source': str(
+                        diagnostic_payload.get('palm_source', 'none')),
+                    'distance_valid': (
+                        diagnostic_payload.get('distance_valid') is True),
+                    'control_reason': depth_filter.last_reason,
+                    'depth_reason': str(
+                        diagnostic_payload.get('depth_reason', '')),
+                    'sample_age_ms': sample_age_ms,
+                    'depth_age_ms': depth_age_ms,
+                    'depth_skew_ms': depth_skew_ms,
+                    'inference_ms': diagnostic_payload.get('inference_ms'),
+                    'source_age_ms': diagnostic_payload.get('source_age_ms'),
+                    'baseline_m': depth_filter.baseline,
+                    'filtered_m': depth_filter.filtered,
+                    'tracking_error_rad': tracking_error,
+                    'command_delta_rad': command_delta,
+                    'yaw_tracking': yaw_visible,
+                    'yaw_error': yaw_error,
+                    'yaw_offset_rad': (
+                        yaw_target - anchor[self.face_yaw_index]),
+                    'mesh_status': mesh['status'],
+                    'mesh_progress': mesh['progress'],
+                }
+            next_tick += period
+            next_tick = max(next_tick, time.monotonic())
+            time.sleep(max(0.0, next_tick - time.monotonic()))
+
+        self._publish_impedance_command(command)
+        with self._palm_lock:
+            final_state = dict(self._palm_game_state)
+            final_state['active'] = False
+            final_state['hand_detected'] = False
+            final_state['mesh_status'] = mesh['status']
+            final_state['mesh_progress'] = mesh['progress']
+            self._palm_game_state = final_state
+        self.get_logger().info(
+            f'Palm push/pull interaction complete: reason={finish_reason}, '
+            f'mesh={mesh["status"]}, elapsed={time.monotonic() - started_at:.1f} s')
+        if finish_reason == 'model_ready':
+            self._speak(self.tts_model_ready_text)
+            return 'ok'
+        if finish_reason in ('abort', 'home'):
+            return finish_reason
+        if finish_reason == 'failed':
+            return 'failed'
+        return 'ok'
+
     def _publish_impedance_command(self, positions, velocities=None):
         """
         Direct topic command to zephyr_arm_impedance_controller (unchained
@@ -1888,6 +2560,13 @@ class GhostGameNode(Node):
         msg.position = [float(position)]
         msg.velocity = [0.2] * len(msg.position)
         self._gripper_pub.publish(msg)
+
+    def _prepare_gripper_for_palm_interaction(self):
+        """Open and settle the gripper before gesture perception becomes active."""
+        self.get_logger().info('Opening gripper before palm interaction')
+        self._open_gripper(self.gripper_open_position)
+        time.sleep(self.gripper_settle_time)
+        return self._face_control_request()
 
     def _generate_targets(self):
         n = len(self.joints)
@@ -1931,7 +2610,9 @@ class GhostGameNode(Node):
             self._locked = [False] * n
             self._dwell = [0.0] * n
             self._stiffness_state = [0.0] * n
-            self._abort_requested = False
+            # A mock-palm request can arrive immediately after ~/start but
+            # before this background thread acquires the lock.
+            self._abort_requested = self._mock_palm_transition_pending
             self._go_home_requested = False
         self._reset_reconstruction_state()
         self._speak(self.tts_setup_text)
@@ -2158,6 +2839,23 @@ class GhostGameNode(Node):
                 if gesture_result == 'failed':
                     self.get_logger().error(
                         'Face inspection gesture failed')
+                    self._safe_abort()
+                    return
+            if self.enable_gesture_interaction:
+                interaction_result = self._run_palm_interaction()
+                if interaction_result == 'abort':
+                    self.get_logger().warn(
+                        'Abort requested during palm interaction')
+                    self._safe_abort()
+                    return
+                if interaction_result == 'home':
+                    self.get_logger().info(
+                        'Go-home requested during palm interaction')
+                    self._return_home()
+                    return
+                if interaction_result == 'failed':
+                    self.get_logger().error(
+                        'Palm interaction motion failed')
                     self._safe_abort()
                     return
 

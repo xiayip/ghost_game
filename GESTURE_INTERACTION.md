@@ -17,13 +17,33 @@
 
 MediaPipe 原模型提供 21 个手部关键点及有限的静态类别，**不自带握手、碰拳、挥手分类器**。这里的握手、碰拳是意图候选；侧视、遮挡和手部旋转会影响规则，需在真机视角采集数据验证。它们不能证明双方已接触，也不能仅凭 RGB 得到手掌在机械臂基座下的位置。[官方能力与坐标定义](https://developers.google.com/edge/mediapipe/solutions/vision/gesture_recognizer/python)
 
-每条有效结果包含标签、置信度、来源 `classifier/heuristic`、手部跟踪 ID 和源时间戳。内置标签的 `score` 来自模型；几何候选使用未校准的固定分数 `0.70`，同时保留 `raw_label/raw_score` 供现场调参，不能将两类分数直接比较。`hand_id` 是短期几何关联编号，不是人物身份。当前不关联人脸与手所属人物；默认检查最多两只手，多手同时出现时停止触发，先采用单人、单手交互。
+每条有效结果包含标签、置信度、来源 `classifier/heuristic`、手部跟踪 ID 和源时间戳。内置标签的 `score` 来自模型；几何候选使用未校准的固定分数 `0.70`，同时保留 `raw_label/raw_score` 供现场调参，不能将两类分数直接比较。`hand_id` 是短期几何关联编号，不是人物身份。当前不关联人脸与手所属人物；默认检查最多两只手，多手同时出现时只跟踪可见 bbox 面积最大的手。
 
 ## 像“张掌移动无人机”一样使用
 
-稳定张掌约 0.35 秒后记录中点和初始手掌尺寸，移动同一只手得到 `control.dx/dy/dz`：右、下、靠近相机为正，范围 `[-1, 1]`，有死区。`dz` 来自手掌表观尺寸相对初始值的变化，手掌转动也会影响它，因此不是实际深度。松手、低置信度、多人/多手歧义、过期帧都会退出控制并将三个分量归零。挥手判定成立时进入 `wave`，不同时保留张掌控制。
+稳定张掌约 0.20 秒后记录中点和初始手掌尺寸，移动同一只手得到 `control.dx/dy/dz`：右、下、靠近相机为正，范围 `[-1, 1]`，有死区。同一帧检测到多只手时，节点只把可见裁剪 bbox 面积最大的手送入状态机、深度采样和机械臂控制，检测消息与调试画面也只标出这只主手。掌心随动资格独立于 MediaPipe 的语义类别：模型输出 `Open_Palm` 时直接接受；模型因转动或前后运动偶发输出 `None`、`wave` 或 `handshake_offer` 时，只要 21 点几何仍显示至少三根非拇指手指伸展，`palm_open` 仍保持为真。这样不会因为一帧类别抖动重新等待 0.20 秒。语义手势事件仍沿用原来的严格标签门控。
 
-这是**无量纲的位移提示**，还不是机械臂速度或三维目标。要得到可靠的前后米制距离，应将掌心与 Orbbec 对齐深度配准；当前近似值只适合低速交互原型。`palm_follow` 是一次启动请求，连续位移从 `/gestures/palm_control` 读取。消费端应将有效新消息映射到经过标定的控制轴，并自行检查消息时效、限速和互斥；停止收到消息也要主动停。相机固定在末端时，相机自身转动也会改变图像中的手掌位置，需要结合末端姿态及手眼标定后再做空间平移。
+兼容字段 `dz` 仍来自手掌表观尺寸变化；实际前后控制使用 `/camera/depth/image_raw/compressedDepth` 的彩色对齐深度。节点缓存最近 12 个压缩深度帧，为每个 RGB 推理结果选择时间戳最接近的 D2C 帧，解码对应 PNG 后在掌心附近圆形区域过滤零值、无穷值和范围外像素并取中值。压缩传输避免把约 0.9 MB 的原始深度帧复制进 Python；现场 profile 中对齐深度接收率约提高一倍。手掌中心相对画面中心的水平误差同时驱动 `joint5`，在局部 ±0.45 rad 范围内以最高 1.00 rad/s 转动相机；J5 在互动阶段使用 `kp=18`，六轴求解器将它作为显式受控关节，因此深度伺服不会抵消该偏航动作。`/gestures/palm_control` 会发布 `palm_open`、`palm_source`、`distance_m`、`distance_valid`、RGB/深度时间差、推理耗时及有效像素数。偶发的单帧丢手或深度失效会短暂保持最后一个有界位置目标，最长 0.20 秒；持续丢失、最大目标换手或超时后才冻结运动。
+
+完整游戏在人脸捕获并提交重建、完成打量动作后进入 `gesture_interaction`。进入该阶段前会重新发布一次夹爪打开命令，并等待 `gripper_settle_time`，夹爪稳定张开后才启用手掌感知与随动；Palm Mock 也经过相同入口。第一帧稳定张掌的米制距离成为中点：手掌靠近相机时距离减小，机械臂沿初始相机光轴后退；手掌远离时机械臂向前探。控制器以 80 Hz 对六轴 URDF 几何雅可比做阻尼最小二乘求解，同时保持相机朝向；随动配置使用 1 cm 死区、±8 cm 行程、16 cm/s 直线速度和 0.65 rad/s 关节速度。短于 0.20 秒的丢手或深度失效保持最后位置目标，随后冻结；原始中点保留 1.00 秒，避免一帧分类或深度抖动反复把当前位置重置为零点。超过该窗口或换手才重新采集中点。机械臂受阻且跟踪误差超过 0.18 rad 时在实测位置重新建立命令，避免继续累积误差。
+
+调试时 Web 引导会显示 `control_reason`。`baseline_captured` 表示刚建立中点，`inside_deadzone` 表示掌距变化小于 1 cm，`tracking` 表示已经输出运动，`arming` 表示张掌还未稳定满 0.20 秒，`rgb_depth_skew`/`stale_sample` 表示时间同步或输入时效问题。也可以直接检查：
+
+```bash
+curl -s http://127.0.0.1:8765/api/state | jq .palm_interaction
+```
+
+若只调试随手运动，不想重复寻找 Ghost 和人脸阶段，可点击 Web 操作台标题右下角低可见度的 `psi / MOCK_PALM` 按钮，或直接调用：
+
+```bash
+ros2 service call /ghost_game_node/mock_palm_interaction std_srvs/srv/Trigger {}
+```
+
+它会抢占当前 searching、人脸、轨迹或其他游戏阶段，等待原控制线程安全退出后，先恢复重力补偿，通过阻抗 JTC 平滑运动到并实测校验 `success_positions`。到位后才以 success pose 作为关节锚点和相机光轴基准，切换到直接阻抗控制并进入 `gesture_interaction`。此过程跳过人脸检测、打量动作和人脸重建。调试模式忽略上一轮遗留的 FLUX/Mesh 终态，持续到 `gesture_interaction_max_duration`；可随时使用现有 Abort 或 Return Home 按钮结束。
+
+游戏节点每秒还会输出一条 `Palm servo accepted`，其中包含 `offset`、`joint_step` 和 `tracking_error`；若未接管则每两秒输出 `Palm servo waiting` 及拒绝原因。图像里仅出现 bbox 和距离说明检测与深度采样有效，不代表稳定张掌门控已经通过。
+
+Orbbec 启动文件已开启 `depth_registration=true`、`align_target_stream=COLOR`，并关闭未使用的点云。该设置只在相机驱动重启后生效。互动至少持续 8 秒；Tripo 的 `/ghost/reconstruction/mesh_status` 成功或失败后结束，最长 90 秒。相关行程、速度、时长和深度参数集中在 `ghost_game_orchestrator/config/ghost_game.yaml` 与 `ghost_game_perception/config/ghost_game.yaml`。
 
 `pointing` 额外给出二维指向单位向量，不能直接确定“指的是哪个物体”。若要指物，需要目标检测/分割、对齐深度和指向射线匹配；本次不加入这些重模型。
 
@@ -78,14 +98,14 @@ ros2 launch ghost_game ghost_game.launch.py enable_gestures:=true gesture_dry_ru
 |---|---|
 | `/gestures/state` | 当前帧是否有效、原因、标签、归一化位置和性能信息 |
 | `/gestures/events` | 稳定识别后仅发送一次的事件，带唯一 `event_id` |
-| `/gestures/palm_control` | 张掌的连续控制提示，含 `active` 与时间戳 |
+| `/gestures/palm_control` | 张掌连续控制，含 `active`、`distance_m`、深度质量和时间戳 |
 | `/gestures/detections` | 由 21 个关键点外接得到的手部 bbox 与原始 MediaPipe 类别 |
 | `/interaction/requests` | 标签映射后的交互请求，默认 `dry_run: true`、`executed: false` |
 | `/interaction/status` | 预览、拒绝、忙碌、执行完成或后端错误 |
 
 默认阈值为 0.65，稳定保持 0.35 秒，释放 0.25 秒后才能再次触发，事件冷却 1.5 秒。持续保持同一个手势不会连续启动同一个动作。输入队列和推理槽只保留最新帧；手势推理上限 20 Hz，默认拒绝超过 0.20 秒的源图像。帧率、处理耗时、源年龄与稳定保持时间是不同指标，0.35 秒意图确认不等于相机延迟。
 
-**当前仓库没有握手/碰拳等动作的真实执行服务。** 默认路由只发布可检查的请求，不发送机械臂关节指令。接入已经实现的动作后，可将感知 launch 设置为
+张掌推拉游戏已经由 `ghost_game_orchestrator` 直接执行；**握手、碰拳等其余动作仍没有真实执行服务。** 默认路由只发布可检查的请求，不发送这些动作的机械臂关节指令。接入已经实现的动作后，可将感知 launch 设置为
 `enable_gesture_router:=false`，再运行独立路由器并配置白名单映射：
 
 ```bash

@@ -229,6 +229,10 @@ function init() {
   controls.target.set(0, 0.2, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+  // OrbitControls defaults to zoomSpeed=1, which makes each wheel notch
+  // noticeably jump on this compact panel. Keep zoom precise enough for
+  // inspecting the arm pose without changing drag/orbit sensitivity.
+  controls.zoomSpeed = 0.25;
 
   scene.add(new THREE.AmbientLight(0x8899aa, 0.7));
   const rim = new THREE.DirectionalLight(0x00d4ff, 1.1);

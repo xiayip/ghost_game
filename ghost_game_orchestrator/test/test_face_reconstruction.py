@@ -30,6 +30,11 @@ def make_node():
     node._reconstruction_request_id = ''
     node._reconstruction_state = node._new_reconstruction_state()
     node._reconstruction_prompt_pub = RecordingPublisher()
+    node._mesh_lock = threading.Lock()
+    node._mesh_state = {
+        'status': 'idle', 'progress': 0, 'request_id': '',
+        'received_at': 0.0,
+    }
     node.get_logger = lambda: FakeLogger()
     return node
 

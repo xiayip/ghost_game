@@ -1,9 +1,10 @@
 """One camera subscriber and one latest-frame worker for face or gesture mode."""
 
+from collections import deque
 from dataclasses import dataclass
 import json
 import math
-from threading import Condition, Event, Thread
+from threading import Condition, Event, Lock, Thread
 import time
 
 import cv2
@@ -17,7 +18,12 @@ from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
-from .backends import FaceBackend, GestureBackend, hand_boxes
+from .backends import FaceBackend, GestureBackend, hand_boxes, select_largest_hand
+from .depth_sampling import (
+    match_depth_frame_stamps,
+    sample_aligned_depth,
+    sample_compressed_depth,
+)
 from .mode import FACE, GESTURE, OFF, ModeState, normalize_mode
 
 
@@ -140,7 +146,7 @@ class GhostGamePerceptionNode(Node):
             "face_model_path": "",
             "gesture_model_path": "~/.local/share/ghost_game/gesture_recognizer.task",
             "face_max_processing_rate": 30.0,
-            "gesture_max_processing_rate": 20.0,
+            "gesture_max_processing_rate": 30.0,
             "face_max_frame_age": 0.25,
             "gesture_max_frame_age": 0.20,
             "watchdog_timeout": 0.30,
@@ -166,13 +172,22 @@ class GhostGamePerceptionNode(Node):
             "gesture_min_presence_confidence": 0.5,
             "gesture_min_tracking_confidence": 0.5,
             "gesture_score_threshold": 0.65,
-            "gesture_hold_seconds": 0.35,
-            "gesture_release_seconds": 0.25,
+            "gesture_hold_seconds": 0.20,
+            "gesture_release_seconds": 0.20,
             "gesture_cooldown_seconds": 1.5,
             "gesture_max_gap": 0.25,
             "gesture_move_deadzone": 0.06,
             "gesture_move_scale": 0.25,
             "gesture_bbox_padding_ratio": 0.08,
+            "gesture_depth_topic": "/camera/depth/image_raw/compressedDepth",
+            "gesture_depth_compressed": True,
+            "gesture_depth_queue_size": 12,
+            "gesture_depth_max_age": 0.30,
+            "gesture_depth_max_skew": 0.10,
+            "gesture_depth_radius_ratio": 0.035,
+            "gesture_depth_min_distance": 0.15,
+            "gesture_depth_max_distance": 1.50,
+            "gesture_depth_min_valid_pixels": 8,
             "gesture_state_topic": "/gestures/state",
             "gesture_events_topic": "/gestures/events",
             "gesture_palm_control_topic": "/gestures/palm_control",
@@ -240,6 +255,33 @@ class GhostGamePerceptionNode(Node):
             "move_deadzone": float(p("gesture_move_deadzone")),
             "move_scale": float(p("gesture_move_scale")),
         }
+        self.gesture_depth_max_age = float(p("gesture_depth_max_age"))
+        self.gesture_depth_max_skew = float(p("gesture_depth_max_skew"))
+        self.gesture_depth_queue_size = int(p("gesture_depth_queue_size"))
+        self.gesture_depth_compressed = bool(p("gesture_depth_compressed"))
+        self.gesture_depth_radius_ratio = float(p("gesture_depth_radius_ratio"))
+        self.gesture_depth_min_distance = float(p("gesture_depth_min_distance"))
+        self.gesture_depth_max_distance = float(p("gesture_depth_max_distance"))
+        self.gesture_depth_min_valid_pixels = int(
+            p("gesture_depth_min_valid_pixels")
+        )
+        if any(
+            not math.isfinite(value) or value <= 0
+            for value in (
+                self.gesture_depth_max_age,
+                self.gesture_depth_max_skew,
+                self.gesture_depth_radius_ratio,
+                self.gesture_depth_min_distance,
+                self.gesture_depth_max_distance,
+            )
+        ):
+            raise ValueError("gesture depth limits must be finite and positive")
+        if self.gesture_depth_min_distance >= self.gesture_depth_max_distance:
+            raise ValueError("gesture depth minimum must be below maximum")
+        if self.gesture_depth_min_valid_pixels <= 0:
+            raise ValueError("gesture_depth_min_valid_pixels must be positive")
+        if self.gesture_depth_queue_size <= 0:
+            raise ValueError("gesture_depth_queue_size must be positive")
 
         latest = QoSProfile(
             depth=1,
@@ -319,11 +361,17 @@ class GhostGamePerceptionNode(Node):
             "last_inference_ms": None,
             "last_source_age_ms": None,
         }
+        self._depth_lock = Lock()
+        self._depth_frames = deque(maxlen=self.gesture_depth_queue_size)
 
         self.worker = _LatestWorker(self._process, self._on_worker_error, self._close_backends)
         input_type = CompressedImage if self.input_compressed else Image
         self.image_sub = self.create_subscription(
             input_type, self.image_topic, self._on_image, latest
+        )
+        depth_type = CompressedImage if self.gesture_depth_compressed else Image
+        self.depth_sub = self.create_subscription(
+            depth_type, str(p("gesture_depth_topic")), self._on_depth, latest
         )
         self.mode_sub = self.create_subscription(
             String, str(p("mode_topic")), self._on_mode, latched
@@ -336,14 +384,89 @@ class GhostGamePerceptionNode(Node):
 
         self._apply_mode(str(p("initial_mode")), source="initial_mode")
         self.get_logger().info(
-            "Unified perception ready: input=%s, face=%s, gesture=%s, mode=%s"
+            "Unified perception ready: input=%s, depth=%s, face=%s, gesture=%s, mode=%s"
             % (
                 self.image_topic,
+                str(p("gesture_depth_topic")),
                 self.face_enabled,
                 self.gesture_enabled,
                 self.mode.snapshot()[0],
             )
         )
+
+    def _on_depth(self, message):
+        with self._depth_lock:
+            self._depth_frames.append(message)
+
+    @staticmethod
+    def _message_stamp_ns(message):
+        stamp = message.header.stamp
+        return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+    def _sample_gesture_depth(self, state, color_stamp_ns):
+        center = state.get("center")
+        if (not state.get("valid") or
+                state.get("palm_open") is not True or center is None):
+            return {"distance_valid": False, "depth_reason": "open_palm_required"}
+        with self._depth_lock:
+            messages = list(self._depth_frames)
+        now_ns = self.get_clock().now().nanoseconds
+        stamps_ns = [self._message_stamp_ns(message) for message in messages]
+        index, age, skew, reason = match_depth_frame_stamps(
+            stamps_ns,
+            color_stamp_ns,
+            now_ns,
+            self.gesture_depth_max_age,
+            self.gesture_depth_max_skew,
+        )
+        if index is None:
+            result = {"distance_valid": False, "depth_reason": reason}
+            if age is not None:
+                result["depth_age_sec"] = age
+            if skew is not None:
+                result["depth_skew_sec"] = skew
+            return result
+        message = messages[index]
+        stamp_ns = stamps_ns[index]
+        try:
+            sampler = (
+                sample_compressed_depth
+                if self.gesture_depth_compressed
+                else sample_aligned_depth
+            )
+            sample = sampler(
+                message,
+                center,
+                radius_ratio=self.gesture_depth_radius_ratio,
+                min_distance_m=self.gesture_depth_min_distance,
+                max_distance_m=self.gesture_depth_max_distance,
+                min_valid_pixels=self.gesture_depth_min_valid_pixels,
+            )
+        except ValueError as error:
+            return {
+                "distance_valid": False,
+                "depth_reason": "invalid_depth_frame",
+                "depth_error": str(error),
+            }
+        if sample is None:
+            return {
+                "distance_valid": False,
+                "depth_reason": "insufficient_depth",
+                "depth_age_sec": age,
+                "depth_skew_sec": skew,
+            }
+        return {
+            "distance_valid": True,
+            "distance_m": sample.distance_m,
+            "depth_reason": "ok",
+            "depth_source": "orbbec_aligned_median",
+            "depth_stamp": stamp_ns / 1e9,
+            "depth_age_sec": age,
+            "depth_skew_sec": skew,
+            "depth_valid_pixels": sample.valid_count,
+            "depth_center_px": list(sample.center_px),
+            "depth_radius_px": sample.radius_px,
+        }
 
     def _mode_allowed(self, requested):
         if requested == FACE and not self.face_enabled:
@@ -590,18 +713,28 @@ class GhostGamePerceptionNode(Node):
 
     def _publish_gesture(self, result):
         job, bgr, hands = result["job"], result["bgr"], result["observation"]
+        frame_size = (bgr.shape[1], bgr.shape[0])
+        selected_hand = select_largest_hand(
+            hands, frame_size, self.gesture_bbox_padding
+        )
+        selected_hands = [] if selected_hand is None else [selected_hand]
         now_ns = self.get_clock().now().nanoseconds
         state = self.gesture_backend.engine.process(
-            hands,
+            selected_hands,
             job.stamp_ns / 1e9,
             now_ns / 1e9,
-            frame_size=(bgr.shape[1], bgr.shape[0]),
+            frame_size=frame_size,
             max_age=self.max_ages[GESTURE],
         )
         mode, generation = self.mode.snapshot()
         state["mode"] = mode
         state["generation"] = generation
+        state["detected_hand_count"] = len(hands)
+        state["selected_hand_count"] = len(selected_hands)
+        state["selection"] = "largest_bbox"
         state["stats"] = self._stats_snapshot()
+        depth = self._sample_gesture_depth(state, job.stamp_ns)
+        state["depth"] = depth
         self._send_json(self.gesture_state_pub, state)
         self._send_json(
             self.gesture_control_pub,
@@ -609,15 +742,28 @@ class GhostGamePerceptionNode(Node):
                 state["control"],
                 stamp=state["stamp"],
                 hand_id=state["hand_id"],
+                label=state["label"],
+                score=state["score"],
+                source=state["source"],
+                palm_open=state.get("palm_open", False),
+                palm_source=state.get("palm_source", "none"),
+                center=state["center"],
                 units="dimensionless",
+                distance_units="m",
                 generation=generation,
+                detected_hand_count=len(hands),
+                selected_hand_count=len(selected_hands),
+                selection="largest_bbox",
+                inference_ms=state["stats"].get("last_inference_ms"),
+                source_age_ms=state["stats"].get("last_source_age_ms"),
+                **depth,
             ),
         )
         for event in state["events"]:
             self._send_json(self.gesture_events_pub, dict(event, generation=generation))
 
         boxes = hand_boxes(
-            hands, (bgr.shape[1], bgr.shape[0]), self.gesture_bbox_padding
+            selected_hands, frame_size, self.gesture_bbox_padding
         )
         self.gesture_detection_pub.publish(
             self._detection_array(job.message.header, boxes, "gesture")
@@ -639,6 +785,16 @@ class GhostGamePerceptionNode(Node):
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     (255, 180, 0),
+                    2,
+                )
+            if depth.get("distance_valid"):
+                cv2.putText(
+                    canvas,
+                    "OPEN PALM  %.2f m" % depth["distance_m"],
+                    (18, 32),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.72,
+                    (0, 255, 255),
                     2,
                 )
             self._publish_jpeg(self.gesture_debug_pub, canvas, job.message.header)
@@ -672,6 +828,8 @@ class GhostGamePerceptionNode(Node):
             "label": "unknown",
             "score": 0.0,
             "source": "none",
+            "palm_open": False,
+            "palm_source": "none",
             "center": None,
             "center_px": None,
             "pointing": None,

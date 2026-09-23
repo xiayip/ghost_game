@@ -40,9 +40,9 @@ During centering it rejects sudden bbox center/area jumps as a detector switch
 to another visitor, then resumes scanning instead of chasing the new face.
 When no acceptable face is visible, it repeats the configured serpentine
 wrist scan. The default `face_search_timeout: 0.0` keeps searching until a
-face is acquired or the operator requests abort/return-home. This uses bbox
-area as the distance proxy because the current camera launch has unregistered
-depth (`depth_registration: false`).
+face is acquired or the operator requests abort/return-home. Face acquisition
+keeps bbox area as its lightweight distance proxy; the registered depth stream
+is consumed later by the open-palm interaction.
 
 Once tracking has held the expanded bbox at image center, the orchestrator
 publishes one reconstruction prompt. The detector continuously publishes that
@@ -140,16 +140,19 @@ single latest-frame worker. The orchestrator switches it between `OFF`,
 `FACE`, and `GESTURE` as the game phase changes, so YuNet and MediaPipe never
 compete for the same frame. It preserves the existing face topics and publishes
 current gesture labels on
-`/gestures/state`, debounced one-shot events on `/gestures/events`, continuous
-open-palm displacement hints on `/gestures/palm_control`, and routed previews
+`/gestures/state`, debounced one-shot events on `/gestures/events`, aligned
+Orbbec palm depth on `/gestures/palm_control`, and routed previews
 on `/interaction/requests`. Hand boxes also publish as
 `vision_msgs/msg/Detection2DArray` on `/gestures/detections`. The gesture
 backend is enabled in the unified launch but remains dormant until a
-`GESTURE` phase command arrives. The interaction router
-still defaults to `gesture_dry_run:=true` and has no robot service mapping, so
-recognition alone cannot move the arm. See [GESTURE_INTERACTION.md](GESTURE_INTERACTION.md)
-for label semantics, topic JSON, timing gates, and the explicit procedure for
-wiring a future motion action.
+`GESTURE` phase command arrives. After face capture, the orchestrator enters
+`gesture_interaction`: one stable open palm establishes a neutral depth, then
+closer motion makes the arm retreat and farther motion makes it reach forward
+along the initial camera optical axis while the mesh builds. This path has its
+own stale-data stop, dead zone, speed/travel bounds, joint limits, and blocked
+arm tracking-error guard. The generic event router remains dry-run for other
+gesture actions. See [GESTURE_INTERACTION.md](GESTURE_INTERACTION.md) for label
+semantics, metric depth fields, safety limits, and tuning parameters.
 
 Only one controller, `mit_impedance_controller`, is used for both the free
 and locked behavior per joint: free is just `stiffness=0`. See the module
@@ -233,8 +236,10 @@ Set `TRIPO_API_KEY` before launch or place an ignored
 `img2mesh/config/local_api.yaml` file locally. Use
 `enable_mesh_reconstruction:=false` to skip Tripo while testing the robot.
 The default `enable_gestures:=true gesture_dry_run:=true` keeps MediaPipe
-dormant outside gesture phases and starts the safe preview router. Keep dry-run
-enabled until concrete robot actions have been implemented and mapped. Use
+dormant outside gesture phases and starts the safe preview router. The palm
+push/pull stage is owned by the orchestrator and does not use that router.
+Keep dry-run enabled until other concrete robot actions have been implemented
+and mapped. Use
 `enable_gesture_router:=false` when running a separately configured router. Set
 `enable_gestures:=false` to avoid loading MediaPipe even when a gesture mode is
 requested.
@@ -291,9 +296,10 @@ source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 # /ghost/tts/caption stream and shows the latest line with a
 # cyber-pixel subtitle treatment. The operator console calls the existing
 # start, abort, and return_home Trigger services and displays the ROS result
-# in place. A deliberately low-visibility `mu` developer button in the
-# console heading calls `mock_solve` during the searching phase - good for an
-# audience-facing screen without exposing the demo shortcut prominently.
+# in place. Two deliberately low-visibility developer buttons sit in the
+# console heading: `mu` calls `mock_solve` during the searching phase, while
+# `psi` bypasses the Ghost search and face stages, moves to success pose, and
+# starts palm interaction from that verified pose.
 # Needs internet at
 # the venue (three.js/urdf-loader load from a CDN); the progress bars
 # and subtitle panel themselves have no such dependency and keep working
@@ -315,6 +321,7 @@ source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 ros2 service call /ghost_game_node/start std_srvs/srv/Trigger {}
 ros2 service call /ghost_game_node/abort std_srvs/srv/Trigger {}
 ros2 service call /ghost_game_node/return_home std_srvs/srv/Trigger {}
+ros2 service call /ghost_game_node/mock_palm_interaction std_srvs/srv/Trigger {}
 ```
 `return_home` also works mid-round (it asks the running round's background
 thread to bail out and go home instead of racing a second thread against it).
@@ -340,6 +347,7 @@ Pass `--no-start` when the round has already been started separately.
 | --- | --- | --- |
 | `~/start` | `std_srvs/srv/Trigger` | Begin a new round (random or `fixed_targets`). Fails if a round/return_home is already running. |
 | `~/mock_solve` | `std_srvs/srv/Trigger` | During `searching`, run the soft development trajectory toward the current secret pose. |
+| `~/mock_palm_interaction` | `std_srvs/srv/Trigger` | Preempt the current game stage, skip Ghost and face processing, move to the measured/verified success pose, then start palm push/pull from that pose. It ignores stale reconstruction/Mesh completion and runs until its normal timeout, Abort, or Return Home. |
 | `~/abort` | `std_srvs/srv/Trigger` | Stop the current round ASAP, relax to a safe stiffness. |
 | `~/return_home` | `std_srvs/srv/Trigger` | Glide to the resting pose via the impedance JTC, then close the gripper and fully relax (`gravity_compensation.factor -> 0`). Also interrupts a running round. |
 

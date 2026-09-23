@@ -88,8 +88,9 @@ ghost_game_node:
     # Keep the visitor-facing joint locks compliant, then ramp only the
     # solved/display phase. Joint3 occasionally stopped about 0.061 rad short
     # at kp=25; kp=35 supplies more corrective torque without changing the
-    # FREE/LOCKING/LOCKED feel during the game.
-    success_stiffness: [30.0, 30.0, 35.0, 18.0, 12.0, 12.0]
+    # FREE/LOCKING/LOCKED feel during the game. J5 uses a firmer hold so the
+    # wrist camera can follow the palm yaw command without a large lag.
+    success_stiffness: [30.0, 30.0, 35.0, 18.0, 18.0, 12.0]
     # Independent measured-pose acceptance for the success turn. The shared
     # impedance JTC keeps its stricter 0.03 rad goal tolerance; this local
     # check accepts the real arm's repeatable small static residual only after
@@ -226,13 +227,46 @@ ghost_game_node:
     face_reconstruction_prompt_topic: /ghost/reconstruction/prompt
     face_reconstruction_status_topic: /ghost/reconstruction/status
     face_reconstruction_prompt: >-
-      Transform this full-head crop into an unmistakably cyberpunk operative
-      portrait for 3D reconstruction. Preserve identity, facial geometry, head
-      pose, hair silhouette, ears, and neck. Add visible but face-conforming
-      cybernetic temple and cheek interfaces, thin luminous cyan-magenta
-      circuitry, a translucent HUD lens, and a dark tactical collar. Keep the
-      full face, head, and neck unobstructed with even studio lighting on a
-      plain dark background.
+      Transform this full-head crop into a clean cyberpunk operative portrait for 3D reconstruction. Preserve the subject’s overall identity and recognizable facial characteristics, including the approximate shape and proportions of the eyes, nose, mouth, jawline, and face. Preserve the original head pose, hair silhouette, ears, and neck.
+      Follow a strict source-only accessory policy. Do not add glasses, sunglasses, goggles, visors, earrings, ear studs, piercings, jewelry, hats, headsets, masks, facial hardware, cybernetic implants, tattoos, or any other accessory or body modification unless that exact item is clearly visible in the source image. If an item is absent, partly ambiguous, hidden, or uncertain, render the subject without it. Never infer an accessory from the cyberpunk theme. When an accessory is clearly present, preserve only that existing item with its original shape, style, color, placement, and relationship to the face; do not redesign, replace, duplicate, or embellish it.
+      Apply the subtle cyberpunk style only through color grading, lighting, background, clothing texture, and non-structural surface treatment. Do not use new wearable props or facial adornments to express the style. Keep the full face, head, ears, and neck clearly visible and unobstructed, with even studio lighting on a plain dark background suitable for 3D reconstruction.
+
+    # Hide FLUX/Tripo latency with a depth-driven palm mirror game. The palm
+    # distance is sampled from Orbbec depth aligned to the RGB stream. Moving
+    # the open palm closer makes the camera retreat; moving it farther makes
+    # the camera reach forward. Loss of the open-palm signal freezes motion.
+    enable_gesture_interaction: true
+    gesture_palm_control_topic: /gestures/palm_control
+    gesture_mesh_status_topic: /ghost/reconstruction/mesh_status
+    gesture_interaction_min_duration: 8.0
+    gesture_interaction_max_duration: 90.0
+    gesture_finish_on_mesh_ready: true
+    gesture_control_rate_hz: 80.0
+    gesture_depth_deadzone: 0.010       # m of palm motion ignored around neutral
+    gesture_depth_gain: 1.0            # arm travel / palm travel
+    gesture_max_offset: 0.08           # m along initial camera optical axis
+    gesture_depth_smoothing_time: 0.04 # s EMA time constant
+    # Hold the last bounded position target across a brief classifier/depth
+    # dropout, then freeze. This is a position hold, not continued velocity.
+    gesture_sample_timeout: 0.20       # s; maximum transient dropout hold
+    # Keep the neutral distance longer so a short loss does not silently turn
+    # the next good frame into a new zero-offset baseline.
+    gesture_reacquire_timeout: 1.00    # s before a lost palm gets a new neutral
+    gesture_position_gain: 6.5         # 1/s, tuned from live palm tracking profile
+    gesture_max_linear_speed: 0.5     # m/s, faster camera-axis response
+    gesture_max_joint_speed: 1.0      # rad/s, matched by MIT reference limits
+    gesture_tracking_error_limit: 0.18 # rad; blocked arm rebases at measured pose
+    # Move the open palm horizontally to steer the camera with the same J5
+    # direction commissioned for face tracking. Depth still controls reach.
+    gesture_yaw_enabled: true
+    gesture_yaw_gain: 2.50            # faster response to horizontal image error
+    gesture_yaw_max_speed: 1.00       # rad/s; matches gesture_max_joint_speed
+    gesture_yaw_max_offset: 0.45      # rad around the interaction anchor
+    gesture_yaw_deadband: 0.08        # normalized by image half-width
+    gesture_joint_max_offsets: [0.12, 0.35, 0.35, 0.35, 0.45, 0.18]
+    tts_gesture_interaction_text: >-
+      特工档案正在重构。张开手掌，左右移动引导我的视线，向我推进或撤离，测试幽灵镜像协议。
+    tts_model_ready_text: "神经几何体已经生成。新的壳，正在显现。"
 
     autostart: false
     # TEST SETTINGS - flip these back before the real show:

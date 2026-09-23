@@ -390,7 +390,13 @@ class _ControlCall:
 class _ControlBridge:
     """Bounded handoff from HTTP server threads to the ROS executor thread."""
 
-    COMMANDS = frozenset(('start', 'abort', 'return_home', 'mock_solve'))
+    COMMANDS = frozenset((
+        'start',
+        'abort',
+        'return_home',
+        'mock_solve',
+        'mock_palm_interaction',
+    ))
 
     def __init__(self, max_pending=8):
         self._pending = queue.Queue(maxsize=max_pending)
@@ -535,6 +541,9 @@ class GhostGameWebMonitor(Node):
             'return_home_service', '/ghost_game_node/return_home')
         self.declare_parameter(
             'mock_solve_service', '/ghost_game_node/mock_solve')
+        self.declare_parameter(
+            'mock_palm_interaction_service',
+            '/ghost_game_node/mock_palm_interaction')
         self.declare_parameter('port', 8765)
         self.declare_parameter('enable_robot_model', True)
         self.declare_parameter('robot_description_package', 'zephyr_arm_description')
@@ -542,6 +551,8 @@ class GhostGameWebMonitor(Node):
         self.declare_parameter('enable_camera', True)
         self.declare_parameter(
             'camera_topic', '/nearest_face/debug_image/compressed')
+        self.declare_parameter(
+            'gesture_camera_topic', '/gestures/debug_image/compressed')
         self.declare_parameter('enable_mesh_model', True)
         self.declare_parameter(
             'mesh_model_path',
@@ -575,6 +586,9 @@ class GhostGameWebMonitor(Node):
                 Trigger, self.get_parameter('return_home_service').value),
             'mock_solve': self.create_client(
                 Trigger, self.get_parameter('mock_solve_service').value),
+            'mock_palm_interaction': self.create_client(
+                Trigger,
+                self.get_parameter('mock_palm_interaction_service').value),
         }
         self._control_timer = self.create_timer(0.05, self._dispatch_controls)
 
@@ -583,6 +597,11 @@ class GhostGameWebMonitor(Node):
         if self.get_parameter('enable_camera').value:
             self.create_subscription(
                 CompressedImage, camera_topic, self._on_camera, qos_profile_sensor_data)
+            self.create_subscription(
+                CompressedImage,
+                self.get_parameter('gesture_camera_topic').value,
+                self._on_camera,
+                qos_profile_sensor_data)
 
         self._mesh_store = _MeshStore(
             self.get_parameter('mesh_model_path').value

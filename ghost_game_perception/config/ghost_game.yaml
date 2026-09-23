@@ -8,12 +8,12 @@ ghost_game_perception:
     status_topic: /ghost/perception/status
     initial_mode: "OFF"
     face_enabled: true
-    gesture_enabled: false
+    gesture_enabled: true
 
     face_model_path: ''
     gesture_model_path: ~/.local/share/ghost_game/gesture_recognizer.task
     face_max_processing_rate: 30.0
-    gesture_max_processing_rate: 20.0
+    gesture_max_processing_rate: 30.0
     face_max_frame_age: 0.25
     gesture_max_frame_age: 0.20
     watchdog_timeout: 0.30
@@ -41,13 +41,30 @@ ghost_game_perception:
     gesture_min_presence_confidence: 0.5
     gesture_min_tracking_confidence: 0.5
     gesture_score_threshold: 0.65
-    gesture_hold_seconds: 0.35
-    gesture_release_seconds: 0.25
+    gesture_hold_seconds: 0.20
+    gesture_release_seconds: 0.20
     gesture_cooldown_seconds: 1.5
     gesture_max_gap: 0.25
     gesture_move_deadzone: 0.06
     gesture_move_scale: 0.25
     gesture_bbox_padding_ratio: 0.08
+    # The Orbbec driver is launched with depth registered to COLOR, so the
+    # normalized RGB palm center addresses the same physical pixel here.
+    # compressedDepth avoids copying ~0.9 MB raw depth frames into Python.
+    # The aligned compressed stream measured about 2x the raw stream rate on
+    # Jetson while preserving the RGB pixel coordinate system.
+    gesture_depth_topic: /camera/depth/image_raw/compressedDepth
+    gesture_depth_compressed: true
+    # Pair RGB with the closest buffered D2C frame instead of whichever depth
+    # callback happened most recently. Twelve frames cover about 0.4 s at the
+    # configured 30 Hz streams while the age/skew limits reject bad matches.
+    gesture_depth_queue_size: 12
+    gesture_depth_max_age: 0.30
+    gesture_depth_max_skew: 0.10
+    gesture_depth_radius_ratio: 0.035
+    gesture_depth_min_distance: 0.15
+    gesture_depth_max_distance: 1.50
+    gesture_depth_min_valid_pixels: 8
     gesture_state_topic: /gestures/state
     gesture_events_topic: /gestures/events
     gesture_palm_control_topic: /gestures/palm_control

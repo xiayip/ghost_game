@@ -163,12 +163,12 @@ header {
 .stealth-control {
   position: absolute;
   right: 7px;
-  bottom: 7px;
+  bottom: 6px;
   z-index: 3;
   display: grid;
   place-items: center;
-  width: 17px;
-  height: 17px;
+  width: 26px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--grey-400);
   background: transparent;
@@ -176,12 +176,13 @@ header {
   font-family: var(--font-mono);
   font-size: 9px;
   cursor: pointer;
-  opacity: 0.12;
+  opacity: 0.28;
   transition: opacity 140ms, border-color 140ms, box-shadow 140ms;
 }
+.stealth-control.palm { right: 39px; }
 .stealth-control small {
   position: absolute;
-  left: 23px;
+  left: 31px;
   bottom: -1px;
   display: none;
   padding: 4px 6px;

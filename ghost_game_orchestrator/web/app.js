@@ -15,6 +15,7 @@ const CAMERA_VISIBLE_PHASES = new Set([
   'face_centering',
   'face_centered',
   'face_gesture',
+  'gesture_interaction',
   'face_not_found',
   'dancing',
   'done',
@@ -105,6 +106,13 @@ const NARRATIVE = {
     guideCn: '档案已捕获，Ghost 正在扫描。',
     guideEn: 'Profile captured. Ghost orbit-scans, tilts to inspect, then nods twice.',
   },
+  gesture_interaction: {
+    chapter: '05', signal: 'MIRROR PROTOCOL', phase: '镜像 / PALM MIRROR', step: 3,
+    titleCn: '用手掌引导 Ghost 的视线与距离',
+    titleEn: 'GUIDE GHOST GAZE AND DISTANCE',
+    guideCn: '左右移动引导视线；向前推让 Ghost 后退，向后撤让它前探。',
+    guideEn: 'Move sideways to steer its gaze; push to repel, pull back to draw it closer.',
+  },
   face_not_found: {
     chapter: '04', signal: 'SIGNAL LOST', phase: '丢失 / SIGNAL LOST', step: 2, tone: 'danger',
     titleCn: '目标信号已丢失',
@@ -165,6 +173,10 @@ const CONTROL_COPY = {
   mock_solve: {
     pendingCn: '正在注入模拟轨迹', pendingEn: 'INJECTING MOCK TRAJECTORY',
     successCn: '秘密姿态轨迹已启动', successEn: 'SECRET-POSE TRAJECTORY STARTED',
+  },
+  mock_palm_interaction: {
+    pendingCn: '正在请求手势互动姿态', pendingEn: 'REQUESTING PALM INTERACTION POSE',
+    successCn: '已前往成功姿态', successEn: 'MOVING TO SUCCESS POSE',
   },
 };
 
@@ -279,7 +291,11 @@ function renderNarrative(state) {
 
   const found = state.found_count ?? 0;
   const total = state.total ?? 0;
-  const narrativeKey = `${state.phase ?? 'unknown'}:${found}:${total}`;
+  const palm = state.palm_interaction || {};
+  const palmKey = state.phase === 'gesture_interaction'
+    ? `${!!palm.hand_detected}:${!!palm.yaw_tracking}:${Number(palm.distance_m || 0).toFixed(2)}:${Number(palm.offset_m || 0).toFixed(2)}:${Number(palm.yaw_offset_rad || 0).toFixed(2)}`
+    : '';
+  const narrativeKey = `${state.phase ?? 'unknown'}:${found}:${total}:${palmKey}`;
   if (narrativeKey === lastNarrativeKey) return;
   lastNarrativeKey = narrativeKey;
 
@@ -291,6 +307,35 @@ function renderNarrative(state) {
   if (state.phase === 'searching' && found > 0 && total > 0) {
     missionGuideCn.textContent = `已回收 ${found}/${total} 枚碎片。继续掰动未锁定的关节。`;
     missionGuideEn.textContent = `${found}/${total} fragments recovered. Keep moving the unlocked joints.`;
+  } else if (state.phase === 'gesture_interaction') {
+    if (palm.hand_detected && Number.isFinite(Number(palm.distance_m))) {
+      const distanceCm = Math.round(Number(palm.distance_m) * 100);
+      const offsetCm = Math.round(Math.abs(Number(palm.offset_m || 0)) * 100);
+      const directionCn = Number(palm.offset_m || 0) > 0 ? '前探' :
+        Number(palm.offset_m || 0) < 0 ? '后退' : '中立';
+      const directionEn = Number(palm.offset_m || 0) > 0 ? 'REACHING' :
+        Number(palm.offset_m || 0) < 0 ? 'RETREATING' : 'NEUTRAL';
+      const yawDeg = Math.round(Number(palm.yaw_offset_rad || 0) * 180 / Math.PI);
+      missionGuideCn.textContent = `掌距 ${distanceCm} cm // Ghost ${directionCn} ${offsetCm} cm // J5 偏航 ${yawDeg}°`;
+      missionGuideEn.textContent = `PALM ${distanceCm} CM // GHOST ${directionEn} ${offsetCm} CM // J5 YAW ${yawDeg}°`;
+    } else if (palm.yaw_tracking) {
+      const yawDeg = Math.round(Number(palm.yaw_offset_rad || 0) * 180 / Math.PI);
+      missionGuideCn.textContent = `深度信号等待中 // J5 正在跟随手掌 ${yawDeg}°`;
+      missionGuideEn.textContent = `WAITING FOR DEPTH // J5 TRACKING PALM ${yawDeg}°`;
+    } else {
+      const reason = String(palm.control_reason || 'waiting_for_open_palm');
+      const depthReason = String(palm.depth_reason || '');
+      if (palm.label === 'open_palm' && palm.distance_valid && !palm.control_active) {
+        missionGuideCn.textContent = `已看到手掌与深度，保持稳定以建立基准 // ${reason}`;
+        missionGuideEn.textContent = `PALM + DEPTH FOUND. HOLD STEADY TO ARM // ${reason}`;
+      } else if (palm.label === 'open_palm' && !palm.distance_valid) {
+        missionGuideCn.textContent = `已看到手掌，等待有效深度 // ${depthReason || reason}`;
+        missionGuideEn.textContent = `PALM FOUND. WAITING FOR DEPTH // ${depthReason || reason}`;
+      } else {
+        missionGuideCn.textContent = `将一只张开的手掌放在相机前并保持稳定 // ${reason}`;
+        missionGuideEn.textContent = `SHOW ONE OPEN PALM AND HOLD STEADY // ${reason}`;
+      }
+    }
   } else {
     missionGuideCn.textContent = story.guideCn;
     missionGuideEn.textContent = story.guideEn;

@@ -118,40 +118,70 @@ class HandBox:
     handedness: str
 
 
-def hand_boxes(hands, frame_size, padding_ratio=0.08):
-    """Convert normalized MediaPipe landmarks into clipped pixel boxes."""
+def _hand_box(hand, frame_size, padding_ratio):
+    """Convert one MediaPipe hand into a clipped pixel box."""
+    width, height = frame_size
+    points = getattr(hand, "landmarks", None)
+    if not points or len(points) != 21:
+        return None
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    if not all(math.isfinite(value) for value in xs + ys):
+        return None
+    left = min(xs) * width
+    right = max(xs) * width
+    top = min(ys) * height
+    bottom = max(ys) * height
+    padding = max(right - left, bottom - top) * padding_ratio
+    left = max(0, math.floor(left - padding))
+    top = max(0, math.floor(top - padding))
+    right = min(width, math.ceil(right + padding))
+    bottom = min(height, math.ceil(bottom + padding))
+    if right <= left or bottom <= top:
+        return None
+    return HandBox(
+        x=left,
+        y=top,
+        width=right - left,
+        height=bottom - top,
+        label=str(getattr(hand, "label", "hand") or "hand"),
+        score=float(getattr(hand, "score", 0.0)),
+        handedness=str(getattr(hand, "handedness", "")),
+    )
+
+
+def _validate_hand_box_options(frame_size, padding_ratio):
     width, height = frame_size
     if width <= 0 or height <= 0 or not math.isfinite(padding_ratio) or padding_ratio < 0:
         raise ValueError("invalid frame size or hand bbox padding")
+
+
+def hand_boxes(hands, frame_size, padding_ratio=0.08):
+    """Convert normalized MediaPipe landmarks into clipped pixel boxes."""
+    _validate_hand_box_options(frame_size, padding_ratio)
     boxes = []
     for hand in hands:
-        points = getattr(hand, "landmarks", None)
-        if not points or len(points) != 21:
-            continue
-        xs = [float(point[0]) for point in points]
-        ys = [float(point[1]) for point in points]
-        if not all(math.isfinite(value) for value in xs + ys):
-            continue
-        left = min(xs) * width
-        right = max(xs) * width
-        top = min(ys) * height
-        bottom = max(ys) * height
-        padding = max(right - left, bottom - top) * padding_ratio
-        left = max(0, math.floor(left - padding))
-        top = max(0, math.floor(top - padding))
-        right = min(width, math.ceil(right + padding))
-        bottom = min(height, math.ceil(bottom + padding))
-        if right <= left or bottom <= top:
-            continue
-        boxes.append(
-            HandBox(
-                x=left,
-                y=top,
-                width=right - left,
-                height=bottom - top,
-                label=str(getattr(hand, "label", "hand") or "hand"),
-                score=float(getattr(hand, "score", 0.0)),
-                handedness=str(getattr(hand, "handedness", "")),
-            )
-        )
+        box = _hand_box(hand, frame_size, padding_ratio)
+        if box is not None:
+            boxes.append(box)
     return boxes
+
+
+def select_largest_hand(hands, frame_size, padding_ratio=0.08):
+    """Return the hand with the largest visible, clipped bbox.
+
+    Stable input order breaks equal-area ties so two similarly sized detections do
+    not alternate merely because of score or handedness metadata.
+    """
+    _validate_hand_box_options(frame_size, padding_ratio)
+    selected = None
+    selected_area = -1
+    for hand in hands:
+        box = _hand_box(hand, frame_size, padding_ratio)
+        if box is None:
+            continue
+        area = box.width * box.height
+        if area > selected_area:
+            selected = hand
+            selected_area = area
+    return selected

@@ -33,21 +33,29 @@ def test_control_bridge_rejects_unknown_command():
     assert payload['command'] == 'dance'
 
 
-def test_control_bridge_accepts_mock_solve_command():
+def _assert_control_bridge_accepts(command):
     bridge = _ControlBridge()
     result = {}
 
     thread = threading.Thread(
         target=lambda: result.setdefault(
-            'value', bridge.request('mock_solve', timeout=1.0)))
+            'value', bridge.request(command, timeout=1.0)))
     thread.start()
     call = bridge.take(timeout=1.0)
-    assert call.command == 'mock_solve'
-    call.finish(200, True, 'mock trajectory queued')
+    assert call.command == command
+    call.finish(200, True, 'mock command accepted')
     thread.join(timeout=1.0)
 
     assert result['value'][0] == 200
     assert result['value'][1]['ok'] is True
+
+
+def test_control_bridge_accepts_mock_solve_command():
+    _assert_control_bridge_accepts('mock_solve')
+
+
+def test_control_bridge_accepts_mock_palm_interaction_command():
+    _assert_control_bridge_accepts('mock_palm_interaction')
 
 
 def test_control_bridge_reports_timeout():

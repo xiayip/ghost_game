@@ -104,6 +104,8 @@ class GestureEngine:
         self._next_event_after = -math.inf
         self._neutral = None
         self._neutral_span = None
+        self._palm_candidate_since = None
+        self._last_hand_stamp = None
         self._wave = deque()
         self._wave_until = -math.inf
         self._wave_turn = -math.inf
@@ -113,10 +115,12 @@ class GestureEngine:
         self._candidate_since = None
         self._neutral = None
         self._neutral_span = None
+        self._palm_candidate_since = None
         self._wave.clear()
         self._wave_until = -math.inf
         if forget_track:
             self._track = None
+            self._last_hand_stamp = None
 
     def _release(self, stamp):
         if not self._latched:
@@ -133,6 +137,7 @@ class GestureEngine:
             'valid': False, 'reason': reason,
             'stamp': float(stamp) if _finite(stamp) else 0.0,
             'hand_id': None, 'label': 'unknown', 'score': 0.0, 'source': 'none',
+            'palm_open': False, 'palm_source': 'none',
             'center': None, 'center_px': None, 'pointing': None, 'events': [],
             'control': {'active': False, 'dx': 0.0, 'dy': 0.0, 'dz': 0.0,
                         'depth_source': 'none', 'reason': reason},
@@ -167,6 +172,24 @@ class GestureEngine:
     def _is_pointing(cls, points):
         extended = cls._extended_fingers(points)
         return extended[0] and not any(extended[1:])
+
+    @staticmethod
+    def _is_open_palm_geometry(points):
+        """Accept a broad open hand even when the model category flickers.
+
+        MediaPipe commonly reports ``None`` while a palm rotates or moves in
+        depth.  Three reasonably straight non-thumb fingers are sufficient
+        for continuous palm control; semantic gesture events still use the
+        recognizer's stricter label path below.
+        """
+        extended = 0
+        for start in (5, 9, 13, 17):
+            a, b, c, d = points[start:start + 4]
+            if (_angle(a, b, c) >= 135 and _angle(b, c, d) >= 120 and
+                    _distance(d, points[0]) >
+                    1.02 * _distance(b, points[0])):
+                extended += 1
+        return extended >= 3
 
     def _classify(self, hand, points):
         label = _LABELS.get(hand.label, 'unknown')
@@ -255,7 +278,18 @@ class GestureEngine:
         if len(hands) != 1:
             if not hands:
                 self._release(stamp)
-            return self._invalid(stamp, 'no_hand' if not hands else 'ambiguous_hands', True)
+                # Semantic events still require uninterrupted dwell. Palm
+                # control has its own short continuity window below.
+                self._candidate = ''
+                self._candidate_since = None
+                # Preserve identity and the palm dwell timer across an
+                # isolated detector miss. A sustained loss still clears all
+                # state after max_gap, and this frame itself remains inactive.
+                if (self._last_hand_stamp is not None and
+                        stamp - self._last_hand_stamp <= self.max_gap):
+                    return self._empty(stamp, 'no_hand')
+            return self._invalid(
+                stamp, 'no_hand' if not hands else 'ambiguous_hands', True)
         hand = hands[0]
         if (not isinstance(hand, HandObservation) or not _points_valid(hand.landmarks)
                 or not _finite(hand.score) or not 0 <= hand.score <= 1
@@ -268,6 +302,9 @@ class GestureEngine:
         points, center, span = self._geometry(hand, frame_size)
         if span < 1e-4:
             return self._invalid(stamp, 'degenerate_hand', True)
+        if (self._last_hand_stamp is not None and
+                stamp - self._last_hand_stamp > self.max_gap):
+            self._suspend(forget_track=True)
         if self._track is not None:
             previous, previous_span, handedness, hand_id = self._track
             jump = math.hypot((center[0] - previous[0]) * frame_size[0] / frame_size[1],
@@ -280,7 +317,15 @@ class GestureEngine:
             self._hand_count += 1
             hand_id = self._hand_count
         self._track = (center, span, hand.handedness, hand_id)
+        self._last_hand_stamp = stamp
         label, source, score = self._classify(hand, points)
+        palm_open = (
+            label in ('open_palm', 'wave') or
+            self._is_open_palm_geometry(points))
+        palm_source = (
+            'classifier' if label == 'open_palm'
+            else 'landmarks' if palm_open
+            else 'none')
         if label == 'open_palm':
             if self._is_wave(center, stamp, span):
                 label, source = 'wave', 'temporal_heuristic'
@@ -294,12 +339,22 @@ class GestureEngine:
         if label != self._candidate:
             self._candidate = label
             self._candidate_since = stamp
-            self._neutral = None
-            self._neutral_span = None
         # A suspended stream can resume the same unknown label with no candidate.
         if self._candidate_since is None:
             self._candidate_since = stamp
         stable = label != 'unknown' and stamp - self._candidate_since + 1e-9 >= self.hold_seconds
+        if palm_open:
+            if self._palm_candidate_since is None:
+                self._palm_candidate_since = stamp
+                self._neutral = None
+                self._neutral_span = None
+        else:
+            self._palm_candidate_since = None
+            self._neutral = None
+            self._neutral_span = None
+        palm_stable = (
+            palm_open and self._palm_candidate_since is not None and
+            stamp - self._palm_candidate_since + 1e-9 >= self.hold_seconds)
         events = []
         if stable and not self._latched and stamp + 1e-9 >= self._next_event_after:
             self._event_count += 1
@@ -311,9 +366,9 @@ class GestureEngine:
             self._next_event_after = stamp + self.cooldown_seconds
         control = {'active': False, 'dx': 0.0, 'dy': 0.0, 'dz': 0.0,
                    'depth_source': 'none', 'reason': 'not_open_palm'}
-        if label == 'open_palm':
+        if palm_open:
             control['reason'] = 'arming'
-            if stable:
+            if palm_stable:
                 if self._neutral is None:
                     self._neutral = list(center)
                     self._neutral_span = span
@@ -338,6 +393,7 @@ class GestureEngine:
                 pointing = [dx / norm, dy / norm]
         return {'valid': True, 'reason': 'ok', 'stamp': float(stamp), 'hand_id': hand_id,
                 'label': label, 'score': score, 'source': source,
+                'palm_open': palm_open, 'palm_source': palm_source,
                 'raw_label': hand.label, 'raw_score': float(hand.score),
                 'center': center, 'center_px': [center[0] * frame_size[0], center[1] * frame_size[1]],
                 'pointing': pointing, 'events': events, 'control': control}

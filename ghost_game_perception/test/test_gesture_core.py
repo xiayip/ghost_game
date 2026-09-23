@@ -86,6 +86,37 @@ class GestureCoreTests(unittest.TestCase):
         results += self.hold(engine, start=.7, count=10)
         self.assertEqual(sum(len(r['events']) for r in results), 1)
 
+    def test_none_category_open_hand_still_drives_palm_control(self):
+        engine = GestureEngine()
+        results = self.hold(engine, hand('None'), count=5)
+
+        self.assertTrue(all(result['label'] == 'unknown' for result in results))
+        self.assertTrue(all(result['palm_open'] for result in results))
+        self.assertEqual(results[-1]['palm_source'], 'landmarks')
+        self.assertTrue(results[-1]['control']['active'])
+
+    def test_semantic_label_flicker_does_not_rearm_palm_control(self):
+        engine = GestureEngine()
+        self.hold(engine)
+
+        none_frame = self.process(engine, hand('None'), .5)
+        recovered = self.process(engine, hand(), .6)
+
+        self.assertTrue(none_frame['control']['active'])
+        self.assertTrue(recovered['control']['active'])
+        self.assertNotEqual(none_frame['label'], recovered['label'])
+
+    def test_one_missing_frame_preserves_palm_dwell_and_identity(self):
+        engine = GestureEngine()
+        before = self.hold(engine)[-1]
+
+        missing = engine.process([], .5, .5)
+        recovered = self.process(engine, stamp=.6)
+
+        self.assertFalse(missing['control']['active'])
+        self.assertEqual(before['hand_id'], recovered['hand_id'])
+        self.assertTrue(recovered['control']['active'])
+
     def test_hold_restarts_after_missing_observation(self):
         engine = GestureEngine()
         self.hold(engine, count=3)
@@ -216,7 +247,10 @@ class GestureCoreTests(unittest.TestCase):
             self.assertEqual(result['source'], 'classifier')
 
     def test_unknown_and_low_confidence_never_trigger(self):
-        for obs in (hand('Unsupported'), hand(score=.3)):
+        low_confidence_fist = curled_unknown()
+        low_confidence_fist.label = 'Closed_Fist'
+        low_confidence_fist.score = .3
+        for obs in (curled_unknown(), low_confidence_fist):
             results = self.hold(GestureEngine(), obs, count=30)
             self.assertTrue(all(r['label'] == 'unknown' for r in results))
             self.assertFalse(any(r['events'] or r['control']['active'] for r in results))
@@ -269,7 +303,8 @@ class GestureCoreTests(unittest.TestCase):
         results = [self.process(engine, hand(dx=dx), i*.08) for i, dx in enumerate(offsets)]
         self.assertTrue(any(r['label'] == 'wave' for r in results))
         self.assertTrue(any(e['label'] == 'wave' for r in results for e in r['events']))
-        self.assertTrue(all(not r['control']['active'] for r in results if r['label'] == 'wave'))
+        self.assertTrue(all(r['palm_open'] for r in results if r['label'] == 'wave'))
+        self.assertTrue(any(r['control']['active'] for r in results if r['label'] == 'wave'))
         jitter = GestureEngine()
         results = [self.process(jitter, hand(dx=.015*math.sin(i)), i*.05) for i in range(40)]
         self.assertTrue(all(r['label'] != 'wave' for r in results))

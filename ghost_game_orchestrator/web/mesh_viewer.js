@@ -62,6 +62,9 @@ function initMeshViewer() {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
+  // Match the arm viewer's fine wheel zoom. The default zoomSpeed=1 produces
+  // large distance changes in this compact reconstruction viewport.
+  controls.zoomSpeed = 0.25;
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.9;
   controls.target.set(0, 0, 0);
