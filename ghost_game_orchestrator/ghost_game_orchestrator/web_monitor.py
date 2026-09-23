@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""
+Ghost Game Web Monitor - serves the cyberpunk-styled progress dashboard
+(web/index.html + style.css + app.js + viewer.js) over plain HTTP, backed by
+ghost_game_node's ~/state topic. Stdlib http.server only - no extra web
+framework dependency for the state feed itself.
+
+Never forwards the 'targets' field even if present in ~/state (the
+dashboard only ever reads 'progress'/'distances'/'locked', never the raw
+secret angles) - see ghost_game_node.py's publish_debug_distances /
+debug_reveal_targets for what actually controls what's on the wire.
+
+Also expands the real arm URDF (via xacro, same as robot_state_publisher
+would) once at startup and proxies its mesh files, so the browser's 3D
+panel can render the actual CAD meshes instead of a schematic skeleton -
+see /robot/robot.urdf and /robot/pkg/<package>/<relpath> below.
+
+Also proxies nearest_face's annotated compressed stream (sensor_msgs/
+CompressedImage, JPEG) so the dashboard shows the selected face bounding box
+- see /api/camera.jpg below.
+"""
+
+import functools
+import http.server
+import mimetypes
+import os
+import threading
+from pathlib import Path
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import String
+
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
+
+try:
+    import xacro
+except ImportError:
+    xacro = None
+
+
+def _expand_urdf(package, xacro_relpath, mappings, logger):
+    """Run the given package's xacro file through xacro.process_file, the
+    same way robot_state_publisher does, so the browser gets a plain URDF
+    with real mesh references - no need to hand-maintain a copy here."""
+    if xacro is None:
+        logger.warn('xacro not importable - 3D robot model disabled')
+        return None
+    try:
+        share_dir = get_package_share_directory(package)
+        xacro_path = os.path.join(share_dir, xacro_relpath)
+        doc = xacro.process_file(xacro_path, mappings=mappings)
+        return doc.toxml()
+    except Exception as error:  # noqa: BLE001 - report and degrade gracefully
+        logger.warn(f'Could not expand {package}/{xacro_relpath} for the 3D model: {error}')
+        return None
+
+
+def _resolve_package_file(package, relpath):
+    """package://<package>/<relpath> -> absolute path inside that package's
+    share dir, or None if it doesn't resolve/escapes the share dir.
+
+    Deliberately does NOT call Path.resolve() on the final path: with
+    --symlink-install, share dirs are symlinks into src/, and resolving would
+    make a legitimate mesh path look like it "escapes" share_dir. Blocking
+    '..' segments and absolute overrides lexically, before joining, is
+    enough - Path('/a') / '/etc/passwd' would otherwise discard the base.
+    """
+    if relpath.startswith('/') or '..' in relpath.split('/'):
+        return None
+    try:
+        share_dir = get_package_share_directory(package)
+    except PackageNotFoundError:
+        return None
+    candidate = Path(share_dir) / relpath
+    return candidate if candidate.is_file() else None
+
+
+class _StateStore:
+    """Thread-safe holder for the latest ~/state JSON string."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._json = '{}'
+
+    def set(self, json_text):
+        with self._lock:
+            self._json = json_text
+
+    def get(self):
+        with self._lock:
+            return self._json
+
+
+class _CameraStore:
+    """Thread-safe holder for the latest JPEG frame bytes (or None if no
+    frame has arrived yet)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._jpeg = None
+
+    def set(self, jpeg_bytes):
+        with self._lock:
+            self._jpeg = jpeg_bytes
+
+    def get(self):
+        with self._lock:
+            return self._jpeg
+
+
+class _ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    # Default request_queue_size (5) drops/resets connections when the
+    # browser fires ~30 concurrent mesh fetches at page load (surfaces as
+    # net::ERR_CONTENT_LENGTH_MISMATCH / ERR_ABORTED in the browser).
+    request_queue_size = 128
+
+
+class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    state_store: _StateStore = None    # bound by GhostGameWebMonitor before serving
+    camera_store: _CameraStore = None  # bound by GhostGameWebMonitor before serving
+    urdf_text: str = None              # expanded URDF XML, or None if unavailable
+    protocol_version = 'HTTP/1.1'    # keep-alive, so ~30 mesh fetches don't need 30 fresh sockets
+
+    def end_headers(self):
+        # Applies to every response, including the inherited static-file
+        # serving of index.html/style.css/app.js/viewer.js - without this,
+        # browsers happily cache viewer.js across edits and you end up
+        # staring at stale JS wondering why your change "didn't work".
+        self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
+    def _send_bytes(self, body, content_type):
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        # Strip the query string first - app.js cache-busts /api/camera.jpg
+        # with ?t=<timestamp>, which would never exact-match self.path below.
+        path = self.path.split('?', 1)[0]
+        if path in ('/api/state', '/api/state/'):
+            self._send_bytes(self.state_store.get().encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/camera.jpg', '/api/camera.jpg/'):
+            jpeg_bytes = self.camera_store.get() if self.camera_store else None
+            if jpeg_bytes is None:
+                self.send_error(404, 'No camera frame received yet')
+                return
+            self._send_bytes(jpeg_bytes, 'image/jpeg')
+            return
+        if path in ('/robot/robot.urdf', '/robot/robot.urdf/'):
+            if self.urdf_text is None:
+                self.send_error(404, 'Robot model unavailable (xacro expansion failed at startup)')
+                return
+            self._send_bytes(self.urdf_text.encode('utf-8'), 'application/xml; charset=utf-8')
+            return
+        if path.startswith('/robot/pkg/'):
+            pkg_and_rel = path[len('/robot/pkg/'):].split('/', 1)
+            if len(pkg_and_rel) == 2 and '..' not in pkg_and_rel[1]:
+                resolved = _resolve_package_file(pkg_and_rel[0], pkg_and_rel[1])
+                if resolved is not None:
+                    content_type = mimetypes.guess_type(str(resolved))[0] or 'application/octet-stream'
+                    self._send_bytes(resolved.read_bytes(), content_type)
+                    return
+            self.send_error(404, 'Mesh not found')
+            return
+        super().do_GET()
+
+    def log_message(self, format_str, *args):
+        pass  # quiet - the ROS logger already announces startup; polling would flood stdout
+
+
+class GhostGameWebMonitor(Node):
+
+    def __init__(self):
+        super().__init__('ghost_game_web_monitor')
+        self.declare_parameter('state_topic', '/ghost_game_node/state')
+        self.declare_parameter('port', 8765)
+        self.declare_parameter('enable_robot_model', True)
+        self.declare_parameter('robot_description_package', 'zephyr_arm_description')
+        self.declare_parameter('robot_description_xacro', 'urdf/zephyr_arm.urdf.xacro')
+        self.declare_parameter('enable_camera', True)
+        self.declare_parameter(
+            'camera_topic', '/nearest_face/debug_image/compressed')
+
+        state_topic = self.get_parameter('state_topic').value
+        port = int(self.get_parameter('port').value)
+
+        self._store = _StateStore()
+        self.create_subscription(String, state_topic, self._on_state, 10)
+
+        self._camera_store = _CameraStore()
+        camera_topic = self.get_parameter('camera_topic').value
+        if self.get_parameter('enable_camera').value:
+            self.create_subscription(
+                CompressedImage, camera_topic, self._on_camera, qos_profile_sensor_data)
+
+        web_dir = get_package_share_directory('ghost_game_orchestrator') + '/web'
+        _StateHTTPRequestHandler.state_store = self._store
+        _StateHTTPRequestHandler.camera_store = self._camera_store
+        if self.get_parameter('enable_robot_model').value:
+            _StateHTTPRequestHandler.urdf_text = _expand_urdf(
+                self.get_parameter('robot_description_package').value,
+                self.get_parameter('robot_description_xacro').value,
+                {'use_mock_hardware': 'true'},
+                self.get_logger())
+        handler_cls = functools.partial(_StateHTTPRequestHandler, directory=web_dir)
+        self._httpd = _ThreadingHTTPServer(('0.0.0.0', port), handler_cls)
+        self._server_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._server_thread.start()
+
+        model_status = 'loaded' if _StateHTTPRequestHandler.urdf_text else 'unavailable (skeleton fallback)'
+        self.get_logger().info(
+            f'Ghost game dashboard: http://localhost:{port}  (watching {state_topic}, robot model {model_status})')
+
+    def _on_state(self, msg: String):
+        self._store.set(msg.data)
+
+    def _on_camera(self, msg: CompressedImage):
+        self._camera_store.set(bytes(msg.data))
+
+    def destroy_node(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        super().destroy_node()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = GhostGameWebMonitor()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

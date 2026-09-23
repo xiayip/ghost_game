@@ -1,0 +1,227 @@
+ghost_game_node:
+  ros__parameters:
+    joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+    joint_lower_limits: [-2.8, 0.0, 0.0, -1.57, -1.57, -3.14]
+    joint_upper_limits: [2.8, 3.14, 3.14, 1.57, 1.57, 3.14]
+
+    # Set to 6 nonzero values to force a fixed round (repeatable demo/testing).
+    # Leave empty for a fresh random target each round.
+    # Recorded password pose for joint1 through joint6. The OmniPicker finger
+    # joint is controlled separately and is not part of the password match.
+    fixed_targets: [1.5707, 0.652344822883606, 0.3171595335006714, 0.8820659518241882, -0.3999974727630615, -0.02761240303516388]
+    target_margin_ratio: 0.2
+
+    match_tolerance: 0.12          # rad
+    match_dwell_time: 0.3          # s, must stay inside tolerance this long to count as a hit
+    loop_rate_hz: 30.0
+
+    # Development-only auto-solver, activated explicitly through
+    # ~/mock_solve. It moves the impedance equilibrium with a minimum-jerk
+    # trajectory while the normal measured-position dwell/lock logic remains
+    # active. Peak reference speed is bounded per joint; minimum duration is
+    # used when that speed bound permits a shorter move.
+    mock_solve_stiffness: [10.0, 8.0, 8.0, 6.0, 4.0, 4.0]
+    mock_solve_max_velocity: [0.35, 0.25, 0.25, 0.35, 0.35, 0.35]
+    mock_solve_min_duration: 4.0
+    mock_solve_settle_timeout: 4.0
+
+    # Baseline copied from zephyr_arm_impedance_controller / damping_controller
+    # config (src/zephyr_common/zephyr_arm_ros2/zephyr_arm_bringup/config/controllers.yaml).
+    free_damping: [2.0, 4.0, 3.5, 3.0, 2.5, 1.5]
+    locked_stiffness: [30.0, 25.0, 25.0, 18.0, 12.0, 12.0]
+    locked_damping: [3.0, 5.0, 4.5, 4.0, 3.0, 2.0]
+    stiffness_ramp_steps: 6
+    stiffness_ramp_step_period: 0.05  # s per ramp step
+
+    controller_manager_service: /controller_manager/switch_controller
+    switch_controller_timeout: 5.0
+    impedance_controller: zephyr_arm_impedance_controller
+    impedance_trajectory_controller: zephyr_arm_impedance_trajectory_controller
+    position_adapter_controller: zephyr_arm_position_adapter
+    position_trajectory_controller: zephyr_arm_trajectory_controller
+
+    joint_states_topic: /joint_states
+    gripper_command_topic: /omni_picker/gripper_command
+    # OmniPicker protocol: normalized [0, 1], 0.0 = fully open, 1.0 = fully closed.
+    gripper_open_position: 0.0
+    gripper_closed_position: 1.0
+    gripper_settle_time: 1.0
+
+    # Stage announcements are sent as plain text to ghost_tts. Speech runs in
+    # its own worker and never blocks the arm loop. Return-home, stuck, and
+    # abort announcements first cancel stale queued speech.
+    tts_enabled: true
+    tts_text_topic: /ghost/tts/text
+    tts_stop_service: /ghost/tts/stop
+    tts_setup_text: "壳层自检完成。意识端口正在接入。"
+    tts_searching_text: "六枚意识碎片已经写入关节。用你的双手，找到它们。"
+    tts_joint_found_texts:
+      - "第一枚碎片，已固定。"
+      - "同步率上升。第二枚碎片，已回收。"
+      - "运动记忆正在重组。第三枚碎片，已上线。"
+      - "壳层响应稳定。第四枚碎片，已锁定。"
+      - "意识边界正在闭合。第五枚碎片，已归位。"
+      - "第六枚碎片，已接入。"
+    tts_all_found_text: "六轴同步完成。Ghost，已经苏醒。"
+    tts_success_pose_text: "视觉神经接管。请看向我。正在扫描访客信号。"
+    tts_face_searching_text: "目标尚未锁定。视觉阵列开始扫描。"
+    tts_face_locked_text: "人脸信号稳定。正在校准视觉轴。"
+    tts_face_centered_text: "视觉轴校准完成。正在潜入深网，生成访客的特工档案。"
+    tts_face_not_found_text: "目标信号丢失。视觉扫描已经停止。"
+    tts_dancing_text: "运动协议解除。开始执行意识重构序列。"
+    tts_done_text: "档案写入完成。身份未知。Ghost 信号，可信。"
+    tts_returning_home_text: "本轮连接结束。意识碎片正在回收。"
+    tts_idle_text: "壳层进入待机。等待下一次接入。"
+    tts_stuck_text: "运动链路受阻。安全协议已经释放关节。请清除障碍。"
+    tts_aborted_text: "信号中断。当前交互已经终止。"
+
+    # After every ghost has been found, open the gripper and move here through
+    # the impedance JTC. The explicit zero endpoint velocity/acceleration makes
+    # the JTC use a smooth quintic stop; increase success_time_from_start to
+    # slow the move further.
+    success_positions: [-1.5137020349502563, 0.596736490726471, 1.2563692331314087, -0.2887808680534363, 0.012655341997742653, -0.02569492720067501]
+    success_velocities: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    success_accelerations: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    success_seed_time: 0.2
+    success_time_from_start: 8.0
+    # Independent measured-pose acceptance for the success turn. The shared
+    # impedance JTC keeps its stricter 0.03 rad goal tolerance; this local
+    # check accepts the real arm's repeatable small static residual only after
+    # all joints remain settled, so an actually blocked/unfinished move still
+    # aborts and never reveals the camera.
+    # joint2 showed a ~0.048 rad static residual at this loaded pose. Keep
+    # enough margin for run-to-run load variation while still requiring the
+    # measured pose to remain settled for success_settle_time.
+    # accept it locally for the game transition without weakening the shared
+    # JTC/controller tolerances used by other motions.
+    success_position_tolerance: [0.05, 0.08, 0.04, 0.04, 0.04, 0.04]
+    # On hardware, joint3 was still 0.0479 rad from target after 2 s, then
+    # converged below 0.001 rad. Allow the real impedance arm to finish
+    # settling while retaining the tighter per-joint acceptance limits above.
+    success_validation_timeout: 6.0
+    success_settle_time: 0.5
+    success_settle_movement: 0.01
+
+    # Step 2: after the ~180 degree success turn, activate face acquisition.
+    # YuNet remains warm in its own node; detections are ignored until this
+    # phase so old frames cannot trigger a move. The expanded full-head bbox
+    # must cover at least 1.5% of the RGB image to reject distant visitors.
+    enable_face_tracking: true
+    face_detection_topic: /nearest_face/detection
+    face_camera_info_topic: /camera/color/camera_info
+    face_detection_max_age: 1.0
+    face_min_bbox_area_ratio: 0.015
+    face_max_bbox_area_ratio: 0.65
+    # At 15 Hz this requires roughly five consecutive frames. Identity-jump
+    # rejection remains active after acquisition.
+    face_stable_time: 0.30
+    face_stability_center_tolerance: 0.08
+    face_stability_area_relative_tolerance: 0.35
+
+    # At the commissioned camera pose, joint5 rotates the view horizontally
+    # and joint4 vertically. Direction signs map positive image error
+    # (face right/below image center) to the physical joint convention.
+    face_yaw_joint: joint5
+    face_pitch_joint: joint4
+    face_yaw_direction: -1.0
+    face_pitch_direction: -1.0
+    face_yaw_max_offset: 0.50
+    face_pitch_max_offset: 0.30
+    face_joint_margin: 0.05
+
+    # Serpentine wrist scan around success_positions. Each pair is
+    # [joint5 yaw offset, joint4 pitch offset] in radians. A zero search
+    # timeout repeats this pattern until a face is found or abort/home is
+    # requested.
+    face_scan_offsets: [
+      0.0, 0.0,
+      -0.25, 0.0,
+      -0.50, 0.0,
+      -0.50, -0.20,
+      -0.25, -0.20,
+      0.0, -0.20,
+      0.25, -0.20,
+      0.50, -0.20,
+      0.50, 0.20,
+      0.25, 0.20,
+      0.0, 0.20,
+      -0.25, 0.20,
+      -0.50, 0.20,
+    ]
+    face_scan_max_joint_speed: 0.25  # rad/s
+    face_scan_min_motion_time: 0.6   # s
+    face_scan_hold_time: 2.0         # s, allows acquisition and brief occlusion
+    face_search_timeout: 0.0         # 0 = keep scanning until abort/home
+
+    # Continuous visual servo after a stable face is acquired. Normalized
+    # image error becomes joint speed; targets stream directly to the MIT
+    # impedance controller at 60 Hz while the 15 Hz detector supplies fresh
+    # error samples. This removes per-correction trajectory startup latency.
+    face_center_gain: 0.80           # rad/s at normalized image error 1.0
+    face_servo_rate_hz: 60.0
+    face_servo_max_joint_speed: 0.25 # rad/s, also bounds scan peak speed
+    # Freeze immediately when the detector stops refreshing, while allowing
+    # face_target_lost_timeout for reacquisition before resuming the scan.
+    face_servo_detection_timeout: 0.20
+    face_center_tolerance: 0.08      # normalized by image half-width/height
+    # Once dwell begins, tolerate small detector jitter without restarting it.
+    face_center_release_tolerance: 0.12
+    face_center_dwell_time: 0.40
+    # Keep the gimbal-like servo active after the first centered dwell so a
+    # moving visitor can observe continuous following before Step 2 completes.
+    face_follow_duration: 3.0
+    face_center_timeout: 20.0
+    face_target_lost_timeout: 1.5
+    # During centering, reject a sudden bbox jump as a detector identity
+    # switch. This prevents the arm from chasing another visitor in a crowd.
+    face_track_center_jump_tolerance: 0.25
+    face_track_area_relative_jump_tolerance: 0.75
+
+    autostart: false
+    # TEST SETTINGS - flip these back before the real show:
+    #   enable_dance:false skips only the optional dance; the impedance-JTC
+    #   success move above still runs. Debug flags reveal the secret targets
+    #   on ~/state for the monitor tool.
+    enable_dance: false
+    publish_debug_distances: true
+    debug_reveal_targets: true
+
+    # PLACEHOLDER choreography - replace with a real recorded routine.
+    # Flat lists: dance_positions has n_points * n_joints entries, row-major
+    # (all 6 joint positions for point 0, then point 1, ...).
+    dance_time_from_start: [1.5, 3.0, 4.5, 6.0]
+    dance_positions: [
+      1.5707, 1.8, 1.3, 0.3, 0.3, 0.5,
+      1.5707, 1.4, 1.8, -0.3, -0.3, -0.5,
+      1.5707, 1.57, 1.57, 0.0, 0.0, 0.0,
+      1.5707, 1.57, 1.57, 0.0, 0.0, 0.0,
+    ]
+
+    # Resting pose for the ~/return_home service. Driven via the impedance
+    # JTC (no controller switch back to the position chain, no BT involved).
+    home_positions: [1.5707, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # Softer than the compliant baseline on purpose - see the comment next to
+    # this parameter's declare_parameter() call in ghost_game_node.py for why
+    # a lower stiffness meaningfully lowers force for a typical blocked hand.
+    home_stiffness: [10.0, 8.0, 8.0, 6.0, 4.0, 4.0]
+    home_damping: [2.0, 4.0, 3.5, 3.0, 2.5, 1.5]
+    home_time_from_start: 4.0
+    # Short seed goal to the JTC at the current live pose before the real
+    # move - see _return_home for why (stale-setpoint fix).
+    home_seed_time: 0.1
+    # If the arm doesn't actually reach home_positions (stuck/blocked - the
+    # JTC action reports success regardless since no goal tolerances are
+    # configured, so we verify with measured position instead), back off
+    # this fraction of the way toward where it started and release stiffness.
+    stuck_retreat_fraction: 0.3
+    stuck_retreat_time: 1.0
+    # Poll for arrival/stall during the move instead of waiting the full
+    # home_time_from_start before checking anything.
+    stuck_check_period: 0.15
+    stuck_stall_window: 0.5
+    stuck_stall_movement: 0.02
+    # Don't start judging stall until this much time has elapsed since the
+    # move began - a soft home_stiffness means the arm genuinely lags the
+    # commanded trajectory at the start (near-zero real movement even with
+    # nothing blocking it), which was tripping stuck-detection immediately.
+    stuck_grace_period: 1.5

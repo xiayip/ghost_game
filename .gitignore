@@ -1,0 +1,12 @@
+# ROS/colcon outputs
+build/
+install/
+log/
+
+# Editor and generated files
+.idea/
+.vscode/
+compile_commands.json
+__pycache__/
+*.py[cod]
+

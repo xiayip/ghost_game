@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ghost_game</name>
+  <version>0.1.0</version>
+  <description>Meta package and unified launch for the Find the Ghost application.</description>
+  <maintainer email="yipeng.xia@hotmail.com">nvidia</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ghost_game_face_detection</exec_depend>
+  <exec_depend>ghost_game_orchestrator</exec_depend>
+  <exec_depend>ghost_tts</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

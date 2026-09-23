@@ -1,0 +1,14 @@
+ghost_tts:
+  ros__parameters:
+    preset: ghost
+    effect_strength: 0.7
+    volume: 0.7
+    length_scale: 1.08
+    # The show speaker is owned by the host PipeWire/PulseAudio session.
+    # The devcontainer mounts its native socket and libpulse routes to the
+    # current host default sink (Bluetooth MS-PS1CN during commissioning).
+    audio_device: pulse
+    queue_size: 16
+    max_text_chars: 500
+    max_queue_wait_seconds: 30.0
+    max_audio_seconds: 90.0

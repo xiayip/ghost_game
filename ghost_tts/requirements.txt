@@ -1,0 +1,4 @@
+# ROS2 Jazzy / Ubuntu 24.04: use a system Python 3.12 venv.
+piper-tts==1.8.0
+sounddevice==0.5.6
+numpy>=1.26
