@@ -1,0 +1,7 @@
+# Tested API baseline; do not silently upgrade alongside a ROS deployment.
+# Official cp312 wheels exist for Linux x86_64/aarch64 and Windows AMD64.
+mediapipe==0.10.18
+# Keep NumPy 1.x compatible with Ubuntu Jazzy cv_bridge binaries.
+numpy>=1.26.4,<2
+# MediaPipe uses this OpenCV distribution. Avoid installing opencv-python too.
+opencv-contrib-python==4.10.0.84
