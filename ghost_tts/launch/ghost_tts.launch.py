@@ -12,11 +12,13 @@ def generate_launch_description():
     model = str(Path.home()/'.local/share/ghost_tts/zh_CN-huayan-medium.onnx')
     return LaunchDescription([
         DeclareLaunchArgument('config',default_value=config),
+        DeclareLaunchArgument('backend',default_value='auto'),
         DeclareLaunchArgument('model',default_value=model),
         DeclareLaunchArgument('preset',default_value='ghost'),
         DeclareLaunchArgument('audio_device',default_value='pulse'),
         Node(package='ghost_tts',executable='ghost_tts_node',name='ghost_tts',output='screen',
              parameters=[LaunchConfiguration('config'),{
+                 'backend':ParameterValue(LaunchConfiguration('backend'),value_type=str),
                  'model_path':ParameterValue(LaunchConfiguration('model'),value_type=str),
                  'preset':ParameterValue(LaunchConfiguration('preset'),value_type=str),
                  'audio_device':ParameterValue(LaunchConfiguration('audio_device'),value_type=str)}])])

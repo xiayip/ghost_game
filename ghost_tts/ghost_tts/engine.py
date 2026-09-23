@@ -1,14 +1,36 @@
 from pathlib import Path
+import base64
 import ctypes
 import ctypes.util
+import json
 import os
 import stat
+import uuid
 import wave
 import numpy as np
 
 
 class Cancelled(Exception):
     pass
+
+
+DOUBAO_ENV_VARS = (
+    'DOUBAO_TTS_API_KEY',
+    'DOUBAO_TTS_VOICE_TYPE',
+    'DOUBAO_TTS_RESOURCE_ID',
+)
+
+
+def resolve_tts_backend(requested,environ=None):
+    """Resolve piper/doubao/auto without exposing credential values."""
+    backend = str(requested).strip().lower()
+    if backend not in ('auto','piper','doubao'):
+        raise ValueError('backend must be auto, piper, or doubao')
+    if backend != 'auto':
+        return backend
+    source = os.environ if environ is None else environ
+    return ('doubao' if all(str(source.get(name,'')).strip()
+                            for name in DOUBAO_ENV_VARS) else 'piper')
 
 
 class PiperEngine:
@@ -44,6 +66,162 @@ class PiperEngine:
         if rate is None or samples == 0:
             raise ValueError("TTS generated no audio")
         return np.concatenate(pieces),rate
+
+
+class DoubaoEngine:
+    """Volcengine Doubao Voice V3 SSE client returning mono float32 PCM.
+
+    Credentials are accepted by the constructor so callers can load them from
+    the environment without ever placing them in ROS parameters.  A Session is
+    kept for HTTP keep-alive; the service currently keeps connections alive for
+    about one minute.
+    """
+
+    DEFAULT_ENDPOINT = (
+        'https://openspeech.bytedance.com/api/v3/tts/unidirectional/sse')
+    VALID_SAMPLE_RATES = {8000,16000,22050,24000,32000,44100,48000}
+
+    def __init__(self,api_key,voice_type,resource_id,
+                 model='seed-tts-2.0-standard',sample_rate=24000,
+                 speech_rate=0,loudness_rate=0,endpoint=DEFAULT_ENDPOINT,
+                 timeout_seconds=60.0,max_audio_seconds=90.0,session=None):
+        if not str(api_key).strip():
+            raise ValueError('DOUBAO_TTS_API_KEY is required for backend=doubao')
+        if not str(voice_type).strip():
+            raise ValueError(
+                'DOUBAO_TTS_VOICE_TYPE is required for backend=doubao')
+        if not str(resource_id).strip():
+            raise ValueError(
+                'DOUBAO_TTS_RESOURCE_ID is required for backend=doubao')
+        if int(sample_rate) not in self.VALID_SAMPLE_RATES:
+            raise ValueError('Unsupported Doubao sample rate')
+        if not -50 <= int(speech_rate) <= 100:
+            raise ValueError('doubao_speech_rate must be between -50 and 100')
+        if not -50 <= int(loudness_rate) <= 100:
+            raise ValueError(
+                'doubao_loudness_rate must be between -50 and 100')
+        if float(timeout_seconds) <= 0 or float(max_audio_seconds) <= 0:
+            raise ValueError('Invalid Doubao timeout or audio limit')
+        if not str(endpoint).startswith('https://'):
+            raise ValueError('Doubao endpoint must use HTTPS')
+
+        self.api_key = str(api_key).strip()
+        self.voice_type = str(voice_type).strip()
+        self.resource_id = str(resource_id).strip()
+        self.model = str(model).strip()
+        self.sample_rate = int(sample_rate)
+        self.speech_rate = int(speech_rate)
+        self.loudness_rate = int(loudness_rate)
+        self.endpoint = str(endpoint).strip()
+        self.timeout_seconds = float(timeout_seconds)
+        self.max_audio_seconds = float(max_audio_seconds)
+        if session is None:
+            import requests
+            session = requests.Session()
+        self.session = session
+
+    @classmethod
+    def from_environment(cls,**kwargs):
+        """Create an engine without copying the API key into ROS config."""
+        return cls(
+            api_key=os.environ.get('DOUBAO_TTS_API_KEY',''),
+            voice_type=os.environ.get('DOUBAO_TTS_VOICE_TYPE',''),
+            resource_id=os.environ.get('DOUBAO_TTS_RESOURCE_ID',''),
+            **kwargs)
+
+    def _payload(self,text):
+        params = {
+            'text':text,
+            'speaker':self.voice_type,
+            'audio_params':{
+                'format':'pcm',
+                'sample_rate':self.sample_rate,
+                'speech_rate':self.speech_rate,
+                'loudness_rate':self.loudness_rate,
+            },
+        }
+        if self.model:
+            params['model'] = self.model
+        return {'user':{'uid':'ghost-game'},'req_params':params}
+
+    def synthesize(self,text,cancel):
+        if cancel.is_set():
+            raise Cancelled()
+        headers = {
+            'Content-Type':'application/json',
+            'Accept':'text/event-stream',
+            'X-Api-Key':self.api_key,
+            'X-Api-Resource-Id':self.resource_id,
+            'X-Api-Request-Id':str(uuid.uuid4()),
+        }
+        try:
+            response = self.session.post(
+                self.endpoint,headers=headers,json=self._payload(text),
+                stream=True,timeout=self.timeout_seconds)
+        except Exception as exc:
+            # Never interpolate headers or the credential into diagnostics.
+            raise RuntimeError(
+                f'Doubao TTS request failed: {type(exc).__name__}') from exc
+
+        audio = bytearray()
+        saw_success = False
+        try:
+            status = int(getattr(response,'status_code',0))
+            if status < 200 or status >= 300:
+                log_id = str(getattr(response,'headers',{}).get(
+                    'X-Tt-Logid','')).strip()
+                suffix = f' (logid={log_id})' if log_id else ''
+                raise RuntimeError(f'Doubao TTS HTTP {status}{suffix}')
+            for raw_line in response.iter_lines():
+                if cancel.is_set():
+                    raise Cancelled()
+                if isinstance(raw_line,str):
+                    line = raw_line.strip()
+                else:
+                    line = bytes(raw_line).decode(
+                        'utf-8',errors='strict').strip()
+                if not line or line.startswith(':'):
+                    continue
+                if not line.startswith('data:'):
+                    continue
+                try:
+                    event = json.loads(line[5:].strip())
+                except (json.JSONDecodeError,UnicodeDecodeError) as exc:
+                    raise RuntimeError('Invalid Doubao TTS SSE response') from exc
+                code = int(event.get('code',0))
+                if code == 20000000:
+                    saw_success = True
+                    continue
+                if code != 0:
+                    message = str(event.get('message','')).replace('\n',' ')[:200]
+                    raise RuntimeError(
+                        f'Doubao TTS API error {code}: {message}')
+                encoded = event.get('data')
+                if not encoded:
+                    continue
+                try:
+                    piece = base64.b64decode(encoded,validate=True)
+                except (ValueError,TypeError) as exc:
+                    raise RuntimeError('Invalid Doubao TTS audio data') from exc
+                audio.extend(piece)
+                if len(audio)/(2*self.sample_rate) > self.max_audio_seconds:
+                    raise ValueError(
+                        'Generated speech exceeds max_audio_seconds')
+            if cancel.is_set():
+                raise Cancelled()
+        finally:
+            close = getattr(response,'close',None)
+            if close is not None:
+                close()
+
+        if not saw_success:
+            raise RuntimeError('Doubao TTS stream ended before success event')
+        if not audio:
+            raise ValueError('TTS generated no audio')
+        if len(audio)%2:
+            raise RuntimeError('Doubao TTS returned malformed 16-bit PCM')
+        samples = np.frombuffer(audio,dtype='<i2').astype(np.float32)/32768.0
+        return samples,self.sample_rate
 
 
 def write_wav(path,audio,rate):

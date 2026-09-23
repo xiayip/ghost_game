@@ -13,7 +13,9 @@ from std_msgs.msg import String,Bool
 from std_srvs.srv import Trigger
 from ghost_game_interfaces.action import Speak
 
-from .engine import PiperEngine,Cancelled,play_audio,device_argument
+from .engine import (
+    PiperEngine,DoubaoEngine,Cancelled,play_audio,device_argument,
+    resolve_tts_backend)
 from .effects import cyber_effect,PRESETS
 from .worker import SpeechWorker,clean_text
 
@@ -22,16 +24,26 @@ class GhostTTS(Node):
     def __init__(self):
         super().__init__('ghost_tts')
         defaults = {
+            'backend':'auto',
             'model_path':str(Path.home()/'.local/share/ghost_tts/zh_CN-huayan-medium.onnx'),
             'preset':'ghost','effect_strength':0.7,'volume':0.7,'length_scale':1.08,
+            'apply_effects':True,
             'audio_device':'pulse','queue_size':16,'max_text_chars':500,
             'max_queue_wait_seconds':30.0,'max_audio_seconds':90.0,
+            'doubao_endpoint':DoubaoEngine.DEFAULT_ENDPOINT,
+            'doubao_model':'seed-tts-2.0-standard',
+            'doubao_sample_rate':24000,
+            'doubao_speech_rate':0,
+            'doubao_loudness_rate':0,
+            'doubao_timeout_seconds':60.0,
             'action_name':'/ghost/tts/speak',
             'caption_topic':'/ghost/tts/caption',
         }
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         self.cfg = {key:self.get_parameter(key).value for key in defaults}
+        self.requested_backend = str(self.cfg['backend']).strip().lower()
+        self.cfg['backend'] = resolve_tts_backend(self.requested_backend)
         if self.cfg['preset'] not in PRESETS:
             raise ValueError('Unknown preset')
         if not 0<=self.cfg['volume']<=1 or not 0<=self.cfg['effect_strength']<=1:
@@ -70,8 +82,11 @@ class GhostTTS(Node):
             callback_group=ReentrantCallbackGroup())
         self.event_timer = self.create_timer(0.05,self.flush_events)
         self.worker.start()
+        backend_text = self.cfg['backend']
+        if self.requested_backend == 'auto':
+            backend_text += ' (auto)'
         self.get_logger().info(
-            'Offline TTS ready: '
+            f'TTS started: backend={backend_text}, '
             f'output={self.cfg["audio_device"]}, '
             'publish std_msgs/msg/String on /ghost/tts/text; '
             f'action: {self.cfg["action_name"]}; stop: /ghost/tts/stop')
@@ -84,7 +99,18 @@ class GhostTTS(Node):
                 self.action_condition.notify_all()
 
     def prepare(self):
-        return PiperEngine(self.cfg['model_path'],self.cfg['length_scale'],self.cfg['max_audio_seconds'])
+        if self.cfg['backend'] == 'piper':
+            return PiperEngine(
+                self.cfg['model_path'],self.cfg['length_scale'],
+                self.cfg['max_audio_seconds'])
+        return DoubaoEngine.from_environment(
+            model=self.cfg['doubao_model'],
+            sample_rate=self.cfg['doubao_sample_rate'],
+            speech_rate=self.cfg['doubao_speech_rate'],
+            loudness_rate=self.cfg['doubao_loudness_rate'],
+            endpoint=self.cfg['doubao_endpoint'],
+            timeout_seconds=self.cfg['doubao_timeout_seconds'],
+            max_audio_seconds=self.cfg['max_audio_seconds'])
 
     def perform(self,engine,job,emit):
         emit('synthesizing',job.job_id,'')
@@ -92,7 +118,12 @@ class GhostTTS(Node):
         if job.cancel.is_set():
             raise Cancelled()
         emit('processing',job.job_id,'')
-        audio = cyber_effect(audio,rate,self.cfg['preset'],self.cfg['effect_strength'],self.cfg['volume'])
+        if self.cfg['apply_effects']:
+            audio = cyber_effect(
+                audio,rate,self.cfg['preset'],self.cfg['effect_strength'],
+                self.cfg['volume'])
+        else:
+            audio = audio*self.cfg['volume']
         if job.cancel.is_set():
             raise Cancelled()
         emit('playing',job.job_id,'')

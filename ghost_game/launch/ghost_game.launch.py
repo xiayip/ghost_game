@@ -23,11 +23,14 @@ def generate_launch_description():
     face_reconstruction_server_url = LaunchConfiguration(
         "face_reconstruction_server_url")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
+    web_mesh_model_path = LaunchConfiguration("web_mesh_model_path")
+    web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
     enable_tts = LaunchConfiguration("enable_tts")
     enable_gestures = LaunchConfiguration("enable_gestures")
     gesture_model_path = LaunchConfiguration("gesture_model_path")
     gesture_dry_run = LaunchConfiguration("gesture_dry_run")
     tts_config = LaunchConfiguration("tts_config")
+    tts_backend = LaunchConfiguration("tts_backend")
     tts_model = LaunchConfiguration("tts_model")
     tts_preset = LaunchConfiguration("tts_preset")
     tts_audio_device = LaunchConfiguration("tts_audio_device")
@@ -73,6 +76,19 @@ def generate_launch_description():
                 description="Start the optional web dashboard on port 8765",
             ),
             DeclareLaunchArgument(
+                "web_mesh_model_path",
+                default_value=(
+                    "/workspaces/zephyr-dev/zephyr_ws/outputs/"
+                    "tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb"
+                ),
+                description="Local GLB fallback shown in the web dashboard",
+            ),
+            DeclareLaunchArgument(
+                "web_mesh_url_topic",
+                default_value="/ghost/reconstruction/model_url",
+                description="std_msgs/String topic carrying a remote GLB URL",
+            ),
+            DeclareLaunchArgument(
                 "enable_face_reconstruction",
                 default_value="true",
                 description=(
@@ -98,7 +114,12 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "enable_tts",
                 default_value="true",
-                description="Start offline Piper TTS and enable game announcements",
+                description="Start the selected TTS backend and enable announcements",
+            ),
+            DeclareLaunchArgument(
+                "tts_backend",
+                default_value="piper",
+                description="TTS backend: auto, piper (offline), or doubao (cloud)",
             ),
             DeclareLaunchArgument(
                 "enable_gestures", default_value="false",
@@ -162,6 +183,7 @@ def generate_launch_description():
                 parameters=[
                     tts_config,
                     {
+                        "backend": ParameterValue(tts_backend, value_type=str),
                         "model_path": ParameterValue(tts_model, value_type=str),
                         "preset": ParameterValue(tts_preset, value_type=str),
                         "audio_device": ParameterValue(
@@ -215,6 +237,12 @@ def generate_launch_description():
                 executable="ghost_game_web_monitor",
                 name="ghost_game_web_monitor",
                 output="screen",
+                parameters=[{
+                    "mesh_model_path": ParameterValue(
+                        web_mesh_model_path, value_type=str),
+                    "mesh_url_topic": ParameterValue(
+                        web_mesh_url_topic, value_type=str),
+                }],
                 condition=IfCondition(enable_web_monitor),
             ),
         ]

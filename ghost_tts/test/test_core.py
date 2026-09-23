@@ -1,5 +1,7 @@
 """Core regression tests runnable without ROS, a model, or an audio device."""
 import sys
+import base64
+import json
 import threading
 import time
 import unittest
@@ -8,7 +10,8 @@ from types import SimpleNamespace
 
 import numpy as np
 from ghost_tts.effects import cyber_effect, PRESETS
-from ghost_tts.engine import Cancelled, play_audio
+from ghost_tts.engine import (
+    Cancelled,DoubaoEngine,play_audio,resolve_tts_backend)
 from ghost_tts.worker import SpeechWorker, clean_text
 
 
@@ -216,6 +219,125 @@ class PlaybackTests(unittest.TestCase):
         with patch.dict(sys.modules, {'sounddevice': fake}):
             play_audio(np.zeros(22050, dtype=np.float32), 22050, threading.Event())
         self.assertEqual(observed, {'samples': 48000, 'rate': 48000, 'stopped': True, 'closed': True})
+
+
+class DoubaoEngineTests(unittest.TestCase):
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def __init__(self,lines):
+            self.lines = lines
+            self.closed = False
+
+        def iter_lines(self):
+            yield from self.lines
+
+        def close(self):
+            self.closed = True
+
+    class Session:
+        def __init__(self,response):
+            self.response = response
+            self.request = None
+
+        def post(self,url,**kwargs):
+            self.request = (url,kwargs)
+            return self.response
+
+    @staticmethod
+    def event(value):
+        return ('data: '+json.dumps(value)).encode()
+
+    def make_engine(self,lines,**kwargs):
+        response = self.Response(lines)
+        session = self.Session(response)
+        engine = DoubaoEngine(
+            'test-secret','S_test','seed-icl-2.0',session=session,
+            **kwargs)
+        return engine,session,response
+
+    def test_sse_pcm_synthesis_and_v3_request(self):
+        pcm = np.array([-32768,0,32767],dtype='<i2').tobytes()
+        lines = [
+            b': keep-alive',
+            self.event({'code':0,'data':base64.b64encode(pcm).decode()}),
+            self.event({'code':20000000,'message':'ok','data':None}),
+        ]
+        engine,session,response = self.make_engine(lines)
+
+        audio,rate = engine.synthesize('幽灵链路已建立',threading.Event())
+
+        self.assertEqual(rate,24000)
+        np.testing.assert_allclose(
+            audio,np.array([-1,0,32767/32768],dtype=np.float32))
+        url,request = session.request
+        self.assertEqual(url,DoubaoEngine.DEFAULT_ENDPOINT)
+        self.assertTrue(request['stream'])
+        self.assertEqual(request['headers']['X-Api-Key'],'test-secret')
+        self.assertEqual(
+            request['headers']['X-Api-Resource-Id'],'seed-icl-2.0')
+        self.assertEqual(request['json']['req_params']['speaker'],'S_test')
+        self.assertEqual(
+            request['json']['req_params']['audio_params']['format'],'pcm')
+        self.assertTrue(response.closed)
+
+    def test_cancellation_interrupts_response_collection(self):
+        cancel = threading.Event()
+        first = self.event({
+            'code':0,
+            'data':base64.b64encode(np.zeros(2,dtype='<i2')).decode(),
+        })
+
+        class CancelResponse(self.Response):
+            def iter_lines(inner_self):
+                yield first
+                cancel.set()
+                yield first
+
+        response = CancelResponse([])
+        engine = DoubaoEngine(
+            'test-secret','S_test','seed-icl-2.0',
+            session=self.Session(response))
+        with self.assertRaises(Cancelled):
+            engine.synthesize('cancel me',cancel)
+        self.assertTrue(response.closed)
+
+    def test_api_and_network_errors_never_expose_key(self):
+        engine,_,_ = self.make_engine([
+            self.event({'code':45000000,'message':'voice denied'})])
+        with self.assertRaisesRegex(RuntimeError,'45000000') as caught:
+            engine.synthesize('test',threading.Event())
+        self.assertNotIn('test-secret',str(caught.exception))
+
+        class FailingSession:
+            def post(self,*args,**kwargs):
+                raise RuntimeError('request included test-secret')
+
+        engine = DoubaoEngine(
+            'test-secret','S_test','seed-icl-2.0',session=FailingSession())
+        with self.assertRaisesRegex(RuntimeError,'request failed') as caught:
+            engine.synthesize('test',threading.Event())
+        self.assertNotIn('test-secret',str(caught.exception))
+
+    def test_environment_credentials_are_required(self):
+        with patch.dict('os.environ',{},clear=True):
+            with self.assertRaisesRegex(ValueError,'DOUBAO_TTS_API_KEY'):
+                DoubaoEngine.from_environment()
+
+    def test_auto_backend_requires_all_credentials(self):
+        complete = {
+            'DOUBAO_TTS_API_KEY':'key',
+            'DOUBAO_TTS_VOICE_TYPE':'S_test',
+            'DOUBAO_TTS_RESOURCE_ID':'seed-icl-2.0',
+        }
+        self.assertEqual(resolve_tts_backend('auto',complete),'doubao')
+        incomplete = dict(complete)
+        incomplete.pop('DOUBAO_TTS_API_KEY')
+        self.assertEqual(resolve_tts_backend('auto',incomplete),'piper')
+        self.assertEqual(resolve_tts_backend('doubao',{}),'doubao')
+        with self.assertRaisesRegex(ValueError,'auto, piper, or doubao'):
+            resolve_tts_backend('unknown',complete)
 
 
 if __name__ == '__main__':

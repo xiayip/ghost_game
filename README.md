@@ -8,7 +8,7 @@ This repository is split into six ROS 2 packages with one-way ownership:
 | `ghost_game_interfaces` | Shared ROS 2 interfaces, including the cancellable `Speak` action. |
 | `ghost_game_face_detection` | RGB image input, nearest-face selection, `vision_msgs` bbox output, and annotated debug images. It does not know the game state. |
 | `ghost_game_orchestrator` | Game state machine, controller/gripper coordination, success flow, and terminal/web monitors. It does not implement face detection. |
-| `ghost_tts` | Offline Piper Chinese speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
+| `ghost_tts` | Switchable offline Piper or cloud Doubao speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
 | `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its output is the prepared image input for a later image-to-3D node. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
@@ -72,6 +72,28 @@ success-pose motion. It starts displaying camera frames only after the arm has
 reached that pose (`success_pose_reached`, the `face_*` phases, `dancing`, or
 `done`). At the same time it hides the joint-card list and Arm Pose 3D panel,
 restoring them automatically when the game leaves those post-turn phases.
+
+The dashboard also includes a PBR GLB viewer labelled “Ghost 三维重建体”.
+During integration it loads the local sample at
+`/workspaces/zephyr-dev/zephyr_ws/outputs/tripo_pbr_model_141bec5f-e771-4e61-863f-5c5b663daabe.glb`.
+The browser receives it from the same-origin `/api/mesh/model.glb` endpoint,
+auto-fits it to the viewport, preserves its textures/materials, and supports
+orbit, zoom, and slow automatic rotation.
+
+The production image-to-3D node can replace that sample by publishing an
+HTTP(S) GLB URL as `std_msgs/msg/String` on
+`/ghost/reconstruction/model_url`. The web bridge downloads the file on a
+background thread, validates the GLB header and size, caches up to 100 MiB,
+and updates the viewer without exposing a signed upstream URL to the browser
+or requiring upstream CORS headers:
+
+```bash
+ros2 topic pub --once /ghost/reconstruction/model_url std_msgs/msg/String \
+  "{data: 'https://example.invalid/generated/ghost.glb'}"
+```
+
+Override the temporary local model or topic with the unified launch arguments
+`web_mesh_model_path` and `web_mesh_url_topic`.
 
 The success turn is also checked against live joint feedback. If the
 impedance JTC reports a goal-tolerance abort because of the real arm's small
@@ -164,12 +186,13 @@ ros2 launch zephyr_arm_bringup real_world.launch.py \
 source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 ros2 launch ghost_game ghost_game.launch.py
 ```
-This starts the orchestrator, face detector, offline TTS, and the lightweight
+This starts the orchestrator, face detector, Piper TTS, and the lightweight
 FLUX ROS bridge. Add
 `enable_web_monitor:=true` to start the dashboard in the same launch, or
 `enable_face_detection:=false` when no camera/detector is needed. Use
 `enable_tts:=false` for silent operation. The TTS launch arguments are
-`tts_model`, `tts_preset` (`clean`, `subtle`, `ghost`, or `machine`), and
+`tts_backend` (`auto`, `piper`, or `doubao`), `tts_model`, `tts_preset` (`clean`,
+`subtle`, `ghost`, or `machine`), and
 `tts_audio_device` (`pulse` follows the host default speaker; a direct
 PortAudio name/index such as `0` is also accepted). Watch this
 terminal's log during testing - it's where "stuck/blocked",
@@ -189,6 +212,13 @@ ros2 launch ghost_game_face_detection face_detection.launch.py \
   model_path:=$(ros2 pkg prefix ghost_game)/share/ghost_game/models
 
 ros2 launch ghost_tts ghost_tts.launch.py audio_device:=pulse preset:=ghost
+
+# Cloud voice: export the three variables first, then switch the backend.
+export DOUBAO_TTS_API_KEY='<API key from the Doubao Voice console>'
+export DOUBAO_TTS_VOICE_TYPE='<S_... cloned voice ID>'
+export DOUBAO_TTS_RESOURCE_ID='seed-icl-2.0'
+ros2 launch ghost_tts ghost_tts.launch.py \
+  backend:=auto audio_device:=pulse preset:=ghost
 
 # Cancellable action request. Set interrupt=true to preempt active/queued speech.
 ros2 action send_goal /ghost/tts/speak \
@@ -315,9 +345,11 @@ stuck/blocked back-off, etc). Before a real show, double check:
 - `tts_*_text` / `tts_joint_found_texts` - edit the stage script without
   changing Python. The joint-found list must contain exactly six lines.
 
-Voice DSP, queue limits, volume, speed, and the output device live in
+Voice backend, DSP, queue limits, volume, speed, and the output device live in
 `ghost_tts/config/ghost.yaml`. The unified launch can override the model,
-preset, and audio device from the command line.
+preset, audio device, and backend from the command line. The Doubao API key,
+voice ID, and resource ID are read from `DOUBAO_TTS_*` environment variables
+in the ROS launch terminal and are not ROS parameters.
 
 ## The web dashboard's 3D robot model
 

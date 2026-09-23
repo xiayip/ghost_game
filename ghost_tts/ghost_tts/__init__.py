@@ -1,1 +1,1 @@
-"""Offline cyberpunk TTS for ROS2."""
+"""Switchable local/cloud cyberpunk TTS for ROS2."""

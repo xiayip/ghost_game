@@ -127,9 +127,38 @@
         <div class="camera-offline" id="camera-offline">no signal</div>
       </div>
     </div>
+
+    <section class="mesh-panel" id="mesh-panel" aria-label="Reconstructed Ghost mesh / Ghost 三维重建体">
+      <div class="mesh-head">
+        <div>
+          <span class="eyebrow">// Neural Twin // 意识镜像</span>
+          <strong>Ghost 三维重建体</strong>
+        </div>
+        <span class="mesh-status" id="mesh-status" data-tone="loading">
+          <i></i><b>MODEL LINK INITIALIZING</b>
+        </span>
+      </div>
+      <div class="mesh-body">
+        <div class="mesh-viewport" id="mesh-viewport"></div>
+        <div class="mesh-hud" aria-hidden="true">
+          <span>NEURAL_GEOMETRY // GLB</span>
+          <span id="mesh-meta">WAITING FOR MODEL STREAM</span>
+        </div>
+        <div class="mesh-placeholder" id="mesh-placeholder">
+          <strong>等待意识实体化</strong>
+          <span>AWAITING NEURAL MESH</span>
+        </div>
+      </div>
+      <div class="mesh-foot">
+        <span>拖动旋转 / DRAG TO ORBIT</span>
+        <span>滚轮缩放 / SCROLL TO ZOOM</span>
+        <span>TOPIC // /ghost/reconstruction/model_url</span>
+      </div>
+    </section>
   </div>
 
   <script src="app.js"></script>
   <script type="module" src="viewer.js"></script>
+  <script type="module" src="mesh_viewer.js"></script>
 </body>
 </html>
