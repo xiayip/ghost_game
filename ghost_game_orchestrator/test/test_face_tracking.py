@@ -4,6 +4,7 @@ from ghost_game_orchestrator.face_tracking import (
     FaceStabilityGate,
     face_matches_track,
     face_is_acceptable,
+    inspection_gesture_target,
     make_face_sample,
     scan_target,
     servo_target,
@@ -67,6 +68,21 @@ def test_scan_target_offsets_only_camera_yaw_and_pitch_joints():
         yaw_offset=0.3, pitch_offset=-0.2)
 
     assert target == [0.0, 0.0, 0.0, -0.2, 0.3, 0.0]
+
+
+def test_inspection_gesture_offsets_pitch_and_roll_and_clamps_limits():
+    target = inspection_gesture_target(
+        reference=[0.0, 0.0, 0.0, 0.95, 0.2, 0.0],
+        lower_limits=[-1.0] * 6,
+        upper_limits=[1.0] * 6,
+        pitch_index=3,
+        roll_index=5,
+        pitch_offset=0.2,
+        roll_offset=-0.3,
+        joint_margin=0.05,
+    )
+
+    assert target == [0.0, 0.0, 0.0, 0.95, 0.2, -0.3]
 
 
 def test_servo_target_integrates_velocity_at_control_period():

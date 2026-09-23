@@ -158,6 +158,20 @@ def scan_target(
     return target
 
 
+def inspection_gesture_target(
+        reference, lower_limits, upper_limits, pitch_index, roll_index,
+        pitch_offset, roll_offset, joint_margin=0.0):
+    """Offset the camera pitch/roll while preserving the captured pose."""
+    target = list(reference)
+    for index, offset in (
+            (pitch_index, pitch_offset),
+            (roll_index, roll_offset)):
+        lower = lower_limits[index] + joint_margin
+        upper = upper_limits[index] - joint_margin
+        target[index] = max(lower, min(upper, reference[index] + offset))
+    return target
+
+
 def servo_target(
         current_command, reference, lower_limits, upper_limits,
         yaw_index, pitch_index, error_x, error_y,

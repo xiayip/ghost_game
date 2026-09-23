@@ -16,7 +16,9 @@ Flow:
   5. At the observation pose, acquire a nearby stable face, scan with bounded
      wrist yaw/pitch motions when none is visible, then continuously servo the
      full-head bbox to image center through direct MIT impedance references.
-  6. Optionally switch to the position-control chain and play a short
+  6. After capture, orbit-scan the face and perform a smooth tilt-and-nod
+     gesture from the captured pose while retaining direct impedance control.
+  7. Optionally switch to the position-control chain and play a short
      trajectory ("dance").
 
 Stage transitions publish plain-text cues to ghost_tts. TTS synthesis and
@@ -57,12 +59,14 @@ from .face_tracking import (
     FaceStabilityGate,
     face_matches_track,
     face_is_acceptable,
+    inspection_gesture_target,
     make_face_sample,
     scan_target,
     servo_target,
 )
 from .mock_trajectory import (
     minimum_quintic_duration,
+    quintic_blend,
     trajectory_reference,
 )
 
@@ -132,10 +136,18 @@ class GhostGameNode(Node):
             raise RuntimeError('face_yaw_joint must name one of joints')
         if self.face_pitch_joint not in self.joints:
             raise RuntimeError('face_pitch_joint must name one of joints')
+        if self.face_gesture_roll_joint not in self.joints:
+            raise RuntimeError('face_gesture_roll_joint must name one of joints')
         self.face_yaw_index = self.joints.index(self.face_yaw_joint)
         self.face_pitch_index = self.joints.index(self.face_pitch_joint)
+        self.face_gesture_roll_index = self.joints.index(
+            self.face_gesture_roll_joint)
         if self.face_yaw_index == self.face_pitch_index:
             raise RuntimeError('face yaw and pitch joints must be different')
+        if self.face_gesture_roll_index in (
+                self.face_yaw_index, self.face_pitch_index):
+            raise RuntimeError(
+                'face gesture roll joint must differ from face yaw/pitch joints')
         if not (0.0 < self.face_min_bbox_area_ratio <
                 self.face_max_bbox_area_ratio <= 1.0):
             raise RuntimeError(
@@ -161,6 +173,17 @@ class GhostGameNode(Node):
             self.face_target_lost_timeout,
             self.face_track_center_jump_tolerance,
             self.face_track_area_relative_jump_tolerance,
+            self.face_orbit_pitch_amplitude,
+            self.face_orbit_yaw_amplitude,
+            self.face_orbit_max_joint_speed,
+            self.face_orbit_min_motion_time,
+            self.face_gesture_pitch_amplitude,
+            self.face_gesture_roll_amplitude,
+            self.face_gesture_max_joint_speed,
+            self.face_gesture_nod_max_joint_speed,
+            self.face_gesture_nod_min_motion_time,
+            self.face_gesture_min_motion_time,
+            self.face_gesture_trajectory_rate_hz,
         )
         if any(not math.isfinite(value) or value <= 0.0
                for value in positive_face_values):
@@ -178,6 +201,19 @@ class GhostGameNode(Node):
         if (not math.isfinite(self.face_joint_margin) or
                 self.face_joint_margin < 0.0):
             raise RuntimeError('face_joint_margin must be non-negative')
+        if self.face_gesture_pitch_amplitude > self.face_pitch_max_offset:
+            raise RuntimeError(
+                'face_gesture_pitch_amplitude must not exceed '
+                'face_pitch_max_offset')
+        if (self.face_orbit_pitch_amplitude > self.face_pitch_max_offset or
+                self.face_orbit_yaw_amplitude > self.face_yaw_max_offset):
+            raise RuntimeError(
+                'face orbit amplitudes must stay inside face tracking limits')
+        if (self.face_orbit_max_joint_speed > 1.5 or
+                self.face_gesture_max_joint_speed > 1.5 or
+                self.face_gesture_nod_max_joint_speed > 1.5):
+            raise RuntimeError(
+                'face gesture speeds must not exceed 1.5 rad/s')
         if any(not math.isfinite(value) or value == 0.0 for value in (
                 self.face_yaw_direction, self.face_pitch_direction)):
             raise RuntimeError('face yaw/pitch directions must be finite and nonzero')
@@ -211,7 +247,7 @@ class GhostGameNode(Node):
         self._state_lock = threading.Lock()
         # idle -> searching -> all_found -> success_move ->
         # success_pose_reached -> face_searching/stabilizing/centering ->
-        # face_centered -> dancing/done
+        # face_centered -> face_gesture -> dancing/done
         self._phase = 'idle'
         # Latched when the independently verified success pose is reached.
         # The Web UI consumes this explicit event instead of trying to infer
@@ -462,6 +498,19 @@ class GhostGameNode(Node):
         self.declare_parameter('face_track_center_jump_tolerance', 0.25)
         self.declare_parameter(
             'face_track_area_relative_jump_tolerance', 0.75)
+        self.declare_parameter('face_gesture_enabled', True)
+        self.declare_parameter('face_gesture_roll_joint', 'joint6')
+        self.declare_parameter('face_orbit_pitch_amplitude', 0.22)
+        self.declare_parameter('face_orbit_yaw_amplitude', 0.36)
+        self.declare_parameter('face_orbit_max_joint_speed', 1.20)
+        self.declare_parameter('face_orbit_min_motion_time', 0.18)
+        self.declare_parameter('face_gesture_pitch_amplitude', 0.18)
+        self.declare_parameter('face_gesture_roll_amplitude', 0.30)
+        self.declare_parameter('face_gesture_max_joint_speed', 0.80)
+        self.declare_parameter('face_gesture_nod_max_joint_speed', 1.25)
+        self.declare_parameter('face_gesture_nod_min_motion_time', 0.18)
+        self.declare_parameter('face_gesture_min_motion_time', 0.32)
+        self.declare_parameter('face_gesture_trajectory_rate_hz', 40.0)
         self.declare_parameter('autostart', False)
         self.declare_parameter('enable_dance', True)
         self.declare_parameter('publish_debug_distances', True)
@@ -615,6 +664,30 @@ class GhostGameNode(Node):
             p('face_track_center_jump_tolerance').value)
         self.face_track_area_relative_jump_tolerance = float(
             p('face_track_area_relative_jump_tolerance').value)
+        self.face_gesture_enabled = bool(p('face_gesture_enabled').value)
+        self.face_gesture_roll_joint = p('face_gesture_roll_joint').value
+        self.face_orbit_pitch_amplitude = float(
+            p('face_orbit_pitch_amplitude').value)
+        self.face_orbit_yaw_amplitude = float(
+            p('face_orbit_yaw_amplitude').value)
+        self.face_orbit_max_joint_speed = float(
+            p('face_orbit_max_joint_speed').value)
+        self.face_orbit_min_motion_time = float(
+            p('face_orbit_min_motion_time').value)
+        self.face_gesture_pitch_amplitude = float(
+            p('face_gesture_pitch_amplitude').value)
+        self.face_gesture_roll_amplitude = float(
+            p('face_gesture_roll_amplitude').value)
+        self.face_gesture_max_joint_speed = float(
+            p('face_gesture_max_joint_speed').value)
+        self.face_gesture_nod_max_joint_speed = float(
+            p('face_gesture_nod_max_joint_speed').value)
+        self.face_gesture_nod_min_motion_time = float(
+            p('face_gesture_nod_min_motion_time').value)
+        self.face_gesture_min_motion_time = float(
+            p('face_gesture_min_motion_time').value)
+        self.face_gesture_trajectory_rate_hz = float(
+            p('face_gesture_trajectory_rate_hz').value)
         self.autostart = bool(p('autostart').value)
         self.enable_dance = bool(p('enable_dance').value)
         self.publish_debug_distances = bool(p('publish_debug_distances').value)
@@ -1419,6 +1492,172 @@ class GhostGameNode(Node):
                         break
                 time.sleep(0.05)
 
+    def _build_face_inspection_trajectory(self, anchor):
+        """Build one dense, velocity-continuous JTC gesture trajectory."""
+        n = len(self.joints)
+        rate = self.face_gesture_trajectory_rate_hz
+        points = [list(anchor)]
+        velocities = [[0.0] * n]
+        times = [0.15]  # seed the reactivated JTC at the live captured pose
+        current = list(anchor)
+        time_cursor = times[0]
+
+        def append_quintic(target, duration):
+            nonlocal current, time_cursor
+            start = list(current)
+            steps = max(2, int(math.ceil(duration * rate)))
+            for step in range(1, steps + 1):
+                u = step / steps
+                blend = quintic_blend(u)
+                blend_rate = 30.0 * u ** 2 * (1.0 - u) ** 2 / duration
+                points.append([
+                    start[i] + blend * (target[i] - start[i])
+                    for i in range(n)
+                ])
+                velocities.append([
+                    blend_rate * (target[i] - start[i])
+                    for i in range(n)
+                ])
+                times.append(time_cursor + u * duration)
+            current = list(target)
+            time_cursor += duration
+
+        orbit_start = scan_target(
+            anchor, self.joint_lower_limits, self.joint_upper_limits,
+            self.face_yaw_index, self.face_pitch_index,
+            self.face_orbit_yaw_amplitude, 0.0,
+            self.face_joint_margin)
+        entry_duration = minimum_quintic_duration(
+            current, orbit_start,
+            [self.face_orbit_max_joint_speed] * n,
+            self.face_orbit_min_motion_time)
+        append_quintic(orbit_start, entry_duration)
+
+        # Traverse one ellipse with quintic angle timing. The angular speed is
+        # zero at both ends, matching the entry/exit segment velocities while
+        # staying continuous through every dense interior point.
+        orbit_duration = max(
+            self.face_orbit_min_motion_time,
+            (2.0 * math.pi * 1.875 *
+             max(self.face_orbit_yaw_amplitude,
+                 self.face_orbit_pitch_amplitude) /
+             self.face_orbit_max_joint_speed))
+        orbit_steps = max(8, int(math.ceil(orbit_duration * rate)))
+        orbit_started_at = time_cursor
+        for step in range(1, orbit_steps + 1):
+            u = step / orbit_steps
+            angle = 2.0 * math.pi * quintic_blend(u)
+            angle_rate = (
+                2.0 * math.pi * 30.0 * u ** 2 * (1.0 - u) ** 2 /
+                orbit_duration)
+            yaw_offset = self.face_orbit_yaw_amplitude * math.cos(angle)
+            pitch_offset = self.face_orbit_pitch_amplitude * math.sin(angle)
+            target = scan_target(
+                anchor, self.joint_lower_limits, self.joint_upper_limits,
+                self.face_yaw_index, self.face_pitch_index,
+                yaw_offset, pitch_offset, self.face_joint_margin)
+            velocity = [0.0] * n
+            velocity[self.face_yaw_index] = (
+                -self.face_orbit_yaw_amplitude * math.sin(angle) *
+                angle_rate)
+            velocity[self.face_pitch_index] = (
+                self.face_orbit_pitch_amplitude * math.cos(angle) *
+                angle_rate)
+            points.append(target)
+            velocities.append(velocity)
+            times.append(orbit_started_at + u * orbit_duration)
+        current = list(orbit_start)
+        time_cursor += orbit_duration
+
+        exit_duration = minimum_quintic_duration(
+            current, anchor,
+            [self.face_orbit_max_joint_speed] * n,
+            self.face_orbit_min_motion_time)
+        append_quintic(anchor, exit_duration)
+
+        def append_pitch_roll(pitch_offset, roll_offset, speed, minimum):
+            target = inspection_gesture_target(
+                anchor, self.joint_lower_limits, self.joint_upper_limits,
+                self.face_pitch_index, self.face_gesture_roll_index,
+                pitch_offset, roll_offset, self.face_joint_margin)
+            duration = minimum_quintic_duration(
+                current, target, [speed] * n, minimum)
+            append_quintic(target, duration)
+
+        # One tilt, followed by two crisp nod cycles.
+        append_pitch_roll(
+            0.0, self.face_gesture_roll_amplitude,
+            self.face_gesture_max_joint_speed,
+            self.face_gesture_min_motion_time)
+        append_pitch_roll(
+            0.0, 0.0, self.face_gesture_max_joint_speed,
+            self.face_gesture_min_motion_time)
+        for _ in range(2):
+            append_pitch_roll(
+                self.face_gesture_pitch_amplitude, 0.0,
+                self.face_gesture_nod_max_joint_speed,
+                self.face_gesture_nod_min_motion_time)
+            append_pitch_roll(
+                0.0, 0.0, self.face_gesture_nod_max_joint_speed,
+                self.face_gesture_nod_min_motion_time)
+        return points, times, velocities
+
+    def _run_face_inspection_gesture(self):
+        """Run orbit, tilt, and two nods as one multi-point JTC goal."""
+        anchor = self._positions_snapshot()
+        if any(position is None for position in anchor):
+            self.get_logger().error(
+                'Lost /joint_states before face inspection gesture')
+            return 'failed'
+        anchor = list(anchor)
+        with self._state_lock:
+            self._phase = 'face_gesture'
+        points, times, velocities = self._build_face_inspection_trajectory(
+            anchor)
+        self.get_logger().info(
+            'Face profile captured; sending one smooth multi-point JTC goal '
+            f'({len(points)} points, orbit yaw/pitch='
+            f'{self.face_orbit_yaw_amplitude:.2f}/'
+            f'{self.face_orbit_pitch_amplitude:.2f} rad, nod speed='
+            f'{self.face_gesture_nod_max_joint_speed:.2f} rad/s, '
+            f'duration={times[-1]:.2f} s)')
+
+        # The centering loop left the impedance controller in direct mode.
+        # Prime it at the measured pose, then reactivate its chained JTC; the
+        # first point in this single goal keeps that pose for 0.15 s so no
+        # stale JTC reference can produce a backswing.
+        self._publish_impedance_command(anchor)
+        if not self._switch_controllers(
+                activate=[self.impedance_controller,
+                          self.impedance_trajectory_controller],
+                deactivate=[self.position_adapter_controller,
+                            self.position_trajectory_controller]):
+            self.get_logger().error(
+                'Failed to enter impedance JTC mode for face gesture')
+            return 'failed'
+        if not self._send_trajectory(
+                self._impedance_traj_client, points, times,
+                velocities=velocities):
+            self.get_logger().error('Face gesture trajectory goal failed')
+            return 'failed'
+
+        deadline = time.monotonic() + times[-1] + 2.0
+        while time.monotonic() < deadline:
+            request = self._face_control_request()
+            if request is not None:
+                self._cancel_active_trajectory()
+                return request
+            with self._active_goal_lock:
+                active = self._active_trajectory_goal is not None
+            if not active:
+                self.get_logger().info(
+                    'Face inspection JTC trajectory complete')
+                return 'ok'
+            time.sleep(0.02)
+        self._cancel_active_trajectory()
+        self.get_logger().error('Face inspection JTC trajectory timed out')
+        return 'failed'
+
     def _publish_impedance_command(self, positions, velocities=None):
         """
         Direct topic command to zephyr_arm_impedance_controller (unchained
@@ -1696,6 +1935,23 @@ class GhostGameNode(Node):
                 return
             if face_result == 'not_found':
                 return
+            if self.face_gesture_enabled:
+                gesture_result = self._run_face_inspection_gesture()
+                if gesture_result == 'abort':
+                    self.get_logger().warn(
+                        'Abort requested during face inspection gesture')
+                    self._safe_abort()
+                    return
+                if gesture_result == 'home':
+                    self.get_logger().info(
+                        'Go-home requested during face inspection gesture')
+                    self._return_home()
+                    return
+                if gesture_result == 'failed':
+                    self.get_logger().error(
+                        'Face inspection gesture failed')
+                    self._safe_abort()
+                    return
 
         if not self.enable_dance:
             with self._state_lock:

@@ -186,6 +186,24 @@ ghost_game_node:
     face_track_center_jump_tolerance: 0.25
     face_track_area_relative_jump_tolerance: 0.75
 
+    # After capture, submit the complete gesture as one multi-point impedance
+    # JTC goal. Dense points with continuous velocities remove the stop/start
+    # feel of separate direct-MIT keyframes.
+    # Joint4 is the existing camera pitch axis; joint6 rolls the end camera.
+    face_gesture_enabled: true
+    face_gesture_roll_joint: joint6
+    face_orbit_pitch_amplitude: 0.22  # rad, large ellipse radius on joint4
+    face_orbit_yaw_amplitude: 0.36    # rad, large ellipse radius on joint5
+    face_orbit_max_joint_speed: 1.20  # rad/s, below J4/J5's 1.5 limit
+    face_orbit_min_motion_time: 0.18  # s minimum entry/exit duration
+    face_gesture_pitch_amplitude: 0.18 # rad, about 10.3 degrees nod depth
+    face_gesture_roll_amplitude: 0.30  # rad, about 17.2 degrees
+    face_gesture_max_joint_speed: 0.80 # rad/s for the single head tilt
+    face_gesture_nod_max_joint_speed: 1.25 # rad/s, below J4's 1.5 limit
+    face_gesture_nod_min_motion_time: 0.18 # s per nod keyframe
+    face_gesture_min_motion_time: 0.32 # s minimum tilt keyframe duration
+    face_gesture_trajectory_rate_hz: 40.0 # dense points in one JTC goal
+
     autostart: false
     # TEST SETTINGS - flip these back before the real show:
     #   enable_dance:false skips only the optional dance; the impedance-JTC

@@ -1,8 +1,8 @@
 const POLL_MS = 50; // 20 Hz
 const TTS_POLL_MS = 100; // stage cues are sparse; 100 ms still feels immediate
 const STALE_MS = 2000;
-// The optimized detector publishes 15 Hz. Poll slightly faster so the browser
-// sees every fresh frame without allowing overlapping fetches.
+// The optimized detector publishes 30 Hz. Render its latest processed frame
+// at about 17 Hz without allowing overlapping browser fetches.
 const CAMERA_POLL_MS = 60;
 // Dev-container port forwarding can drop an isolated request under load even
 // when the camera itself is fine - don't flip to "offline" until several
@@ -14,6 +14,7 @@ const CAMERA_VISIBLE_PHASES = new Set([
   'face_stabilizing',
   'face_centering',
   'face_centered',
+  'face_gesture',
   'face_not_found',
   'dancing',
   'done',
@@ -96,6 +97,13 @@ const NARRATIVE = {
     titleEn: 'VISITOR AGENT PROFILE CAPTURED',
     guideCn: '扫描完成，正在写入 Ghost 记忆网络。',
     guideEn: 'Scan complete. Writing the profile into Ghost memory.',
+  },
+  face_gesture: {
+    chapter: '04', signal: 'BEHAVIORAL SCAN', phase: '观察 / INSPECTION', step: 2,
+    titleCn: 'Ghost 正在打量你的 Shell',
+    titleEn: 'GHOST IS INSPECTING YOUR SHELL',
+    guideCn: '档案已捕获，Ghost 正在扫描。',
+    guideEn: 'Profile captured. Ghost orbit-scans, tilts to inspect, then nods twice.',
   },
   face_not_found: {
     chapter: '04', signal: 'SIGNAL LOST', phase: '丢失 / SIGNAL LOST', step: 2, tone: 'danger',
