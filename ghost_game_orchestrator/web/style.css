@@ -836,6 +836,7 @@ header {
   box-shadow: 0 0 10px rgba(255, 61, 113, 0.55);
 }
 .mesh-body {
+  --profile-width: clamp(300px, 29%, 360px);
   position: relative;
   height: min(58vh, 620px);
   min-height: 440px;
@@ -863,16 +864,19 @@ header {
   border-left: 1px solid var(--cyan-400);
 }
 .mesh-body::after {
-  right: 16px;
+  right: calc(var(--profile-width) + 16px);
   bottom: 16px;
   border-right: 1px solid var(--cyan-400);
   border-bottom: 1px solid var(--cyan-400);
 }
 .mesh-portrait {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: var(--profile-width);
+  bottom: 0;
+  left: 0;
   z-index: 1;
-  width: 100%;
+  width: auto;
   height: 100%;
   object-fit: contain;
   display: block;
@@ -925,7 +929,11 @@ header {
 }
 .mesh-viewport {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: var(--profile-width);
+  bottom: 0;
+  left: 0;
+  width: auto;
   z-index: 2;
   transition:
     opacity 280ms var(--ease-out),
@@ -937,8 +945,11 @@ header {
   pointer-events: none;
 }
 .mesh-panel.model-ready .mesh-viewport {
-  inset: 0;
-  width: 100%;
+  top: 0;
+  right: var(--profile-width);
+  bottom: 0;
+  left: 0;
+  width: auto;
   height: 100%;
   z-index: 2;
   opacity: 1;
@@ -951,7 +962,7 @@ header {
 }
 .mesh-panel.model-ready.portrait-ready .mesh-portrait {
   top: 22px;
-  right: 22px;
+  right: calc(var(--profile-width) + 22px);
   bottom: auto;
   left: auto;
   width: min(32%, 330px);
@@ -969,13 +980,13 @@ header {
 }
 .mesh-panel.model-ready.portrait-ready .mesh-portrait-label {
   top: 30px;
-  right: 30px;
+  right: calc(var(--profile-width) + 30px);
   left: auto;
 }
 .mesh-hud {
   position: absolute;
   z-index: 4;
-  right: 20px;
+  right: calc(var(--profile-width) + 20px);
   bottom: 18px;
   left: 20px;
   display: flex;
@@ -989,7 +1000,10 @@ header {
 }
 .mesh-placeholder {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: var(--profile-width);
+  bottom: 0;
+  left: 0;
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -1001,7 +1015,7 @@ header {
 }
 .mesh-placeholder.hidden { display: none; }
 .mesh-panel.portrait-ready.reconstructing .mesh-placeholder {
-  inset: auto 22px 22px 22px;
+  inset: auto calc(var(--profile-width) + 22px) 22px 22px;
   align-items: flex-start;
   padding: 15px 18px 14px;
   border: 1px solid rgba(0, 212, 255, 0.26);
@@ -1074,6 +1088,202 @@ header {
 .mesh-panel.progress-error .mesh-progress-track i {
   background: var(--danger-400);
   box-shadow: 0 0 10px rgba(255, 61, 113, 0.55);
+}
+
+.cyber-profile {
+  position: absolute;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--profile-width);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 22px 18px;
+  border-left: 1px solid rgba(0, 212, 255, 0.34);
+  background:
+    linear-gradient(180deg, rgba(0, 212, 255, 0.055), transparent 28%),
+    repeating-linear-gradient(0deg, transparent 0 27px, rgba(0, 212, 255, 0.025) 27px 28px),
+    rgba(5, 10, 15, 0.95);
+  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.28);
+}
+.cyber-profile::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: -16%;
+  right: 0;
+  left: 0;
+  height: 16%;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(0, 245, 160, 0.13), transparent);
+  opacity: 0;
+}
+.cyber-profile[data-status="generating"]::before,
+.cyber-profile[data-status="running"]::before {
+  opacity: 1;
+  animation: dossier-scan 2.2s linear infinite;
+}
+.cyber-profile > * { position: relative; z-index: 1; }
+.cyber-profile-head {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(0, 212, 255, 0.22);
+}
+.cyber-profile-head > span,
+.cyber-profile-head > strong { display: block; }
+.cyber-profile-head > span {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.17em;
+  color: var(--cyan-400);
+}
+.cyber-profile-head > strong {
+  margin-top: 5px;
+  font-family: var(--font-cyber-cn);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--fg-primary);
+}
+.cyber-profile-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--fg-muted);
+}
+.cyber-profile-state i {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--grey-600);
+}
+.cyber-profile[data-status="generating"] .cyber-profile-state,
+.cyber-profile[data-status="running"] .cyber-profile-state { color: var(--warning-400); }
+.cyber-profile[data-status="generating"] .cyber-profile-state i,
+.cyber-profile[data-status="running"] .cyber-profile-state i {
+  background: var(--warning-400);
+  box-shadow: 0 0 10px rgba(255, 200, 87, 0.55);
+  animation: voice-led 0.8s steps(2, end) infinite;
+}
+.cyber-profile[data-status="success"] .cyber-profile-state { color: var(--success-400); }
+.cyber-profile[data-status="success"] .cyber-profile-state i {
+  background: var(--success-400);
+  box-shadow: var(--glow-success);
+}
+.cyber-profile[data-status="error"] .cyber-profile-state { color: var(--danger-400); }
+.cyber-profile[data-status="error"] .cyber-profile-state i {
+  background: var(--danger-400);
+  box-shadow: 0 0 10px rgba(255, 61, 113, 0.55);
+}
+.cyber-profile-id { padding: 22px 0 18px; }
+.cyber-profile-id > span,
+.cyber-profile-id > strong,
+.cyber-profile-id > small { display: block; }
+.cyber-profile-id > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.17em;
+  color: var(--success-400);
+}
+.cyber-profile-id > strong {
+  margin: 6px 0 5px;
+  font-family: var(--font-cyber-cn);
+  font-size: clamp(22px, 2vw, 31px);
+  font-weight: 400;
+  line-height: 1.16;
+  letter-spacing: 0.1em;
+  color: var(--fg-primary);
+  text-shadow: 0 0 18px rgba(0, 212, 255, 0.2);
+}
+.cyber-profile-id > small {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1.5;
+  letter-spacing: 0.11em;
+  color: var(--cyan-400);
+}
+.cyber-profile-facts {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  margin: 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+.cyber-profile-facts > div { padding: 12px 9px 11px 0; }
+.cyber-profile-facts > div + div {
+  padding-left: 13px;
+  border-left: 1px solid var(--border-default);
+}
+.cyber-profile-facts dt {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  letter-spacing: 0.1em;
+  color: var(--fg-muted);
+}
+.cyber-profile-facts dd {
+  margin: 0;
+  font-family: var(--font-cyber-cn);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--fg-secondary);
+}
+.cyber-level-meter {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  padding: 11px 0 18px;
+}
+.cyber-level-meter span {
+  height: 5px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  background: rgba(0, 212, 255, 0.04);
+}
+.cyber-level-meter span.active {
+  border-color: var(--success-400);
+  background: var(--success-400);
+  box-shadow: 0 0 8px rgba(0, 245, 160, 0.35);
+}
+.cyber-profile-brief { min-height: 0; }
+.cyber-profile-brief > span {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--cyan-700);
+}
+.cyber-profile-brief p {
+  margin: 0;
+  font-family: var(--font-cyber-cn);
+  font-size: 13px;
+  line-height: 1.8;
+  letter-spacing: 0.055em;
+  color: var(--fg-secondary);
+}
+.cyber-profile-source {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 212, 255, 0.16);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  letter-spacing: 0.09em;
+  color: var(--fg-muted);
+}
+.cyber-profile-source b { color: var(--cyan-700); font-weight: 400; }
+
+@keyframes dossier-scan {
+  from { transform: translateY(0); }
+  to { transform: translateY(725%); }
 }
 .mesh-foot {
   display: flex;
@@ -1222,6 +1432,10 @@ header {
   .layout { display: block; }
   .fragment-bank { width: 100%; }
   .viewport { margin-top: 20px; }
+  .mesh-body { --profile-width: clamp(260px, 36%, 310px); }
+  .cyber-profile { padding: 20px 17px 16px; }
+  .cyber-profile-id { padding: 17px 0 14px; }
+  .cyber-profile-brief p { font-size: 12px; line-height: 1.65; }
 }
 
 @media (max-width: 600px) {
@@ -1239,8 +1453,25 @@ header {
   .mission-route::before { display: none; }
   .viewport { min-width: 0; height: 430px; }
   .mesh-head { align-items: flex-start; flex-direction: column; }
-  .mesh-body { min-height: 380px; height: 52vh; }
+  .mesh-body {
+    --profile-width: 0px;
+    min-height: 700px;
+    height: 78vh;
+  }
   .mesh-foot { flex-direction: column; }
+  .mesh-portrait,
+  .mesh-viewport,
+  .mesh-panel.model-ready .mesh-viewport,
+  .mesh-placeholder {
+    right: 0;
+    bottom: 300px;
+    height: auto;
+  }
+  .mesh-hud {
+    right: 18px;
+    bottom: 318px;
+  }
+  .mesh-body::after { right: 16px; bottom: 316px; }
   .mesh-hud span:first-child { display: none; }
   .mesh-panel.model-ready.portrait-ready .mesh-portrait {
     top: 18px;
@@ -1253,6 +1484,34 @@ header {
     right: 24px;
   }
   .mesh-panel.portrait-ready.reconstructing .mesh-placeholder {
-    inset: auto 14px 14px 14px;
+    inset: auto 14px 314px 14px;
   }
+  .cyber-profile {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 300px;
+    padding: 16px 18px 13px;
+    border-top: 1px solid rgba(0, 212, 255, 0.34);
+    border-left: 0;
+    box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.28);
+  }
+  .cyber-profile-head {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    padding-bottom: 10px;
+  }
+  .cyber-profile-head > strong { margin-top: 3px; }
+  .cyber-profile-state { grid-row: 1 / span 2; grid-column: 2; margin: 0; }
+  .cyber-profile-id { padding: 12px 0 10px; }
+  .cyber-profile-id > strong { font-size: 21px; }
+  .cyber-profile-facts { position: absolute; top: 74px; right: 18px; width: 46%; }
+  .cyber-level-meter { position: absolute; top: 128px; right: 18px; width: 46%; }
+  .cyber-profile-brief { max-width: 52%; }
+  .cyber-profile-brief p { font-size: 11px; line-height: 1.55; }
+  .cyber-profile-source { padding-top: 8px; }
+  .cyber-profile-source span { display: none; }
 }

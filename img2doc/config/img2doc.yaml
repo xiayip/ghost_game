@@ -1,0 +1,50 @@
+img2doc:
+  ros__parameters:
+    # Consume the exact FLUX-styled portrait used by img2mesh so the dossier
+    # and reconstructed avatar describe the same visual identity.
+    image_topic: /ghost/reconstruction/image
+    output_topic: /ghost/profile/card
+    submit_service: /ghost/profile/submit
+
+    api_base_url: https://api.deepseek.com
+    api_key_file: ''  # 留空时依次读取 DEEPSEEK_API_KEY、安装目录 config/local_api.yaml
+    model: deepseek-flash  # DeepSeek 官方视觉模型
+    image_detail: original  # 可选：low、high、original、auto
+    request_timeout_sec: 120.0
+    max_retries: 2
+    retry_interval_sec: 1.0
+    max_tokens: 600
+    temperature: 0.2
+
+    max_long_edge: 1300
+    jpeg_quality: 90
+    max_input_bytes: 20000000
+    # FLUX offers transient-local durability. Request it so img2doc also
+    # receives the latest portrait if this node is restarted mid-round.
+    input_transient_local: true
+
+    # FLUX emits exactly one result image per game round, so process it once
+    # without requiring a second orchestrator service call.
+    auto_submit: true
+    auto_interval_sec: 1.0
+    log_each_image: false
+
+    system_prompt: |-
+      你是攻壳机动队主题的原创科幻角色设定编辑。你只分析图中虚构角色的可见外观，不能识别、猜测或披露现实人物身份。最终答案必须是一个合法 json 对象，不得输出 Markdown、解释或额外文字。所有设定都服务于三维角色模型的展示与推广。
+
+    card_prompt: |-
+      请根据输入图片，为图中的主要人物生成一张攻壳机动队主题的原创虚构角色名片。保持角色与图片中的可见外观一致，不要套用已有动漫、影视或游戏角色姓名。character_name 不是人物真名，而是根据角色外观与定位生成的中文行动代号或称号，例如“灰狐”“夜巡者”“镜面幽灵”；不得生成看起来像真实姓名的内容。codename 不是文字代号，而是角色的唯一数字编号。背景中的霓虹灯、城市或装饰本身不能作为高义体等级的依据。
+
+      角色外观性别只描述虚构角色在图片中呈现的外观，必须是“男”“女”“未知”之一；无法可靠判断时使用“未知”。义体等级参照赛博朋克题材并严格从以下等级中选择：C0 原生级（没有可见义体）；C1 辅助级（少量接口、电子镜片或辅助装备）；C2 增强级（多处可见植入，强化感知或行动）；C3 战术级（明显战斗、侦察或网络入侵义体）；C4 深度义体化（头部或身体存在大面积机械结构）；C5 全身义体（身体主体为机械）。
+
+      文本要求：character_name 为 2 至 8 个中文字符组成的虚构角色代号或称号，不能使用“林澈”“张伟”这类真实姓名形式；codename 为 3 至 8 位纯数字字符串，可包含前导零，例如“007”“1042”，不得包含字母、空格、NO、井号或连字符；role 不超过 16 个中文字符；introduction 为 50 至 90 个中文字符的简短角色介绍。
+
+      仅返回如下结构的 json 对象，字段名不得更改：
+      {
+        "character_name": "中文角色代号",
+        "codename": "007",
+        "character_gender": "男或女或未知",
+        "role": "角色定位",
+        "cyberware_level": {"code": "C0至C5", "name": "对应中文等级名"},
+        "introduction": "简短角色介绍"
+      }

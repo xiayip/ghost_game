@@ -1,6 +1,6 @@
 # Ghost Game
 
-This repository is split into seven ROS 2 packages with one-way ownership:
+This repository is split into eight ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
 | --- | --- |
@@ -11,9 +11,10 @@ This repository is split into seven ROS 2 packages with one-way ownership:
 | `ghost_tts` | Switchable offline Piper or cloud Doubao speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
 | `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its prepared output feeds `img2mesh`. |
 | `img2mesh` | Uploads each prepared portrait to Tripo, tracks generation progress, and publishes the completed signed GLB URL to the Web bridge. |
+| `img2doc` | Sends each FLUX portrait to the DeepSeek vision API and publishes a validated fictional cyber dossier for the Web profile panel. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
-ghost_game_perception, ghost_tts, flux_image_editor, img2mesh,
+ghost_game_perception, ghost_tts, flux_image_editor, img2mesh, img2doc,
 ghost_game_interfaces}`. Face and hand inference now live entirely inside
 `ghost_game_perception`; the orchestrator, Web, reconstruction, TTS, and
 action router remain connected through ROS interfaces.
@@ -57,7 +58,11 @@ the prompt without blocking arm motion. The edited image is published on
 image-to-model task, publishes JSON progress on
 `/ghost/reconstruction/mesh_status`, and sends the completed signed GLB URL
 on `/ghost/reconstruction/model_url` to the Web bridge. The robot sequence
-continues while FLUX and Tripo work asynchronously.
+continues while FLUX and Tripo work asynchronously. In parallel, `img2doc`
+consumes `/ghost/reconstruction/image`, generates one structured fictional
+visitor dossier, and publishes it on `/ghost/profile/card`. The Web monitor
+shows its codename, role, presentation, cyberware level, and introduction in
+the column beside the reconstructed 3D avatar.
 Every submitted full-head crop is saved before the HTTP request under
 `/workspaces/zephyr-dev/zephyr_ws/outputs/ghost_face_captures/<request_id>_head_crop.png`.
 The most recent capture is also available at the stable path

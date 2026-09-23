@@ -1,5 +1,6 @@
 const POLL_MS = 50; // 20 Hz
 const TTS_POLL_MS = 100; // stage cues are sparse; 100 ms still feels immediate
+const PROFILE_POLL_MS = 500; // Cloud vision output changes only at request boundaries
 const STALE_MS = 2000;
 // The optimized detector publishes 30 Hz. Render its latest processed frame
 // at about 17 Hz without allowing overlapping browser fetches.
@@ -205,6 +206,17 @@ const controlButtons = [...document.querySelectorAll('[data-control]')];
 const controlFeedback = document.getElementById('control-feedback');
 const controlStatusCn = document.getElementById('control-status-cn');
 const controlStatusEn = document.getElementById('control-status-en');
+const cyberProfile = document.getElementById('cyber-profile');
+const cyberProfileState = document.getElementById('cyber-profile-state');
+const cyberProfileCodename = document.getElementById('cyber-profile-codename');
+const cyberProfileName = document.getElementById('cyber-profile-name');
+const cyberProfileRole = document.getElementById('cyber-profile-role');
+const cyberProfileGender = document.getElementById('cyber-profile-gender');
+const cyberProfileLevel = document.getElementById('cyber-profile-level');
+const cyberProfileIntro = document.getElementById('cyber-profile-intro');
+const cyberProfilePacket = document.getElementById('cyber-profile-packet');
+const cyberLevelMeter = document.getElementById('cyber-level-meter');
+const cyberLevelCells = [...cyberLevelMeter.querySelectorAll('span')];
 
 let lastGoodAt = 0;
 let cardsBuilt = false;
@@ -213,6 +225,7 @@ let cameraRevealed = false; // shown only after the success-pose turn completes
 let lastTtsSequence = 0;
 let voicePulseTimer = null;
 let lastNarrativeKey = '';
+let lastProfileSequence = -1;
 
 function setControlStatus(tone, chinese, english) {
   controlFeedback.dataset.tone = tone;
@@ -469,6 +482,73 @@ async function pollTts() {
   setTimeout(pollTts, TTS_POLL_MS);
 }
 
+function setCyberLevel(levelCode) {
+  const match = /^C([0-5])$/.exec(String(levelCode || '').toUpperCase());
+  const level = match ? Number(match[1]) : 0;
+  cyberLevelMeter.setAttribute('aria-valuenow', String(level));
+  cyberLevelCells.forEach((cell, index) => {
+    cell.classList.toggle('active', !!match && index <= level);
+  });
+}
+
+function renderCyberProfile(profile) {
+  const sequence = Number(profile.sequence) || 0;
+  if (sequence === lastProfileSequence) return;
+  lastProfileSequence = sequence;
+
+  const status = String(profile.status || 'idle').toLowerCase();
+  const requestId = String(profile.request_id || '').slice(0, 8).toUpperCase();
+  cyberProfile.dataset.status = status;
+  cyberProfilePacket.textContent = requestId
+    ? `PACKET ${requestId}`
+    : `PACKET ${String(sequence).padStart(3, '0')}`;
+
+  if (status === 'success') {
+    const level = profile.cyberware_level || {};
+    const levelCode = String(level.code || '').toUpperCase();
+    cyberProfileState.querySelector('b').textContent = 'DOSSIER DECRYPTED';
+    cyberProfileCodename.textContent = `NO.${profile.codename || '---'}`;
+    cyberProfileName.textContent = profile.character_name || '未命名访客';
+    cyberProfileRole.textContent = `ROLE // ${profile.role || 'UNKNOWN'}`;
+    cyberProfileGender.textContent = profile.character_gender || '未知';
+    cyberProfileLevel.textContent = [levelCode, level.name].filter(Boolean).join(' // ') || '--';
+    cyberProfileIntro.textContent = profile.introduction || '未生成意识摘要。';
+    setCyberLevel(levelCode);
+    return;
+  }
+
+  cyberProfileCodename.textContent = 'NO.---';
+  cyberProfileName.textContent = status === 'error' ? '视觉建档失败' : '身份档案生成中';
+  cyberProfileRole.textContent = 'ROLE // ANALYZING';
+  cyberProfileGender.textContent = '--';
+  cyberProfileLevel.textContent = '--';
+  setCyberLevel('');
+
+  if (status === 'running' || status === 'generating') {
+    cyberProfileState.querySelector('b').textContent = 'DECODING VISUAL ID';
+    cyberProfileIntro.textContent = '正在解析 FLUX 画像，生成访客行动代号、角色定位与义体等级……';
+  } else if (status === 'error') {
+    cyberProfileState.querySelector('b').textContent = 'PROFILE LINK ERROR';
+    cyberProfileRole.textContent = 'ROLE // LINK INTERRUPTED';
+    cyberProfileIntro.textContent = profile.error_message || '赛博资料生成链路异常。';
+  } else {
+    cyberProfileState.querySelector('b').textContent = 'AWAITING PROFILE';
+    cyberProfileName.textContent = '身份档案待生成';
+    cyberProfileRole.textContent = 'ROLE // UNKNOWN';
+    cyberProfileIntro.textContent = '等待 FLUX 画像写入视觉分析链路……';
+  }
+}
+
+async function pollCyberProfile() {
+  try {
+    const res = await fetch('/api/profile', { cache: 'no-store' });
+    if (res.ok) renderCyberProfile(await res.json());
+  } catch (err) {
+    // Keep the last complete dossier visible during a brief bridge outage.
+  }
+  setTimeout(pollCyberProfile, PROFILE_POLL_MS);
+}
+
 const cameraOfflineText = document.getElementById('camera-offline');
 let cameraObjectUrl = null;
 let lastCameraGoodAt = 0;
@@ -504,4 +584,5 @@ async function pollCamera() {
 
 poll();
 pollTts();
+pollCyberProfile();
 pollCamera();

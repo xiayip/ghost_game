@@ -110,13 +110,18 @@ def test_tripo_upload_submit_and_poll():
     session = FakeSession()
     client = TripoClient('test-key', 'https://api.example/v3', 5.0, session=session)
     token = client.upload_png(b'PNG-BYTES')
-    task_id = client.submit_image(token, 'P1-20260311', 5000, True, True, False)
+    task_id = client.submit_image(
+        token, 'P1-20260311', 5000, True, True, False,
+        'v3.5-20260815', 'fast', False)
     output = client.wait_for_task(task_id, 1.0, 5.0, threading.Event(), lambda *_: None)
     assert output['model_url'] == 'https://cdn.example/model.glb'
     assert [call[0] for call in session.calls] == ['POST', 'PUT', 'POST', 'GET']
     assert session.calls[1][2]['data'] == b'PNG-BYTES'
     assert session.calls[2][2]['json']['input'] == 'file_123'
     assert session.calls[2][2]['json']['model'] == 'P1-20260311'
+    assert session.calls[2][2]['json']['texture_version'] == 'v3.5-20260815'
+    assert session.calls[2][2]['json']['texture_quality'] == 'fast'
+    assert session.calls[2][2]['json']['delight'] is False
 
 
 def test_invalid_mode_and_p1_quad_rejected():
@@ -129,6 +134,10 @@ def test_invalid_mode_and_p1_quad_rejected():
     values['quad'] = True
     assert 'quad' in validate_settings(values)
     values['quad'] = False
+    values['texture_quality'] = 'fast'
+    assert 'v3.5' in validate_settings(values)
+    values['texture_version'] = 'v3.5-20260815'
+    assert not validate_settings(values)
 
 
 def test_yaml_values_and_private_key_can_be_edited(monkeypatch, tmp_path):

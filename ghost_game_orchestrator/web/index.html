@@ -167,10 +167,50 @@
             <b id="mesh-progress-percent">0%</b>
           </div>
         </div>
+        <aside class="cyber-profile" id="cyber-profile" data-status="idle"
+               aria-label="Visitor cyber dossier / 访客赛博资料" aria-live="polite">
+          <div class="cyber-profile-head">
+            <span>// VISITOR DOSSIER //</span>
+            <strong>访客赛博资料</strong>
+            <div class="cyber-profile-state" id="cyber-profile-state">
+              <i></i><b>AWAITING PROFILE</b>
+            </div>
+          </div>
+          <div class="cyber-profile-id">
+            <span id="cyber-profile-codename">NO.---</span>
+            <strong id="cyber-profile-name">身份档案待生成</strong>
+            <small id="cyber-profile-role">ROLE // UNKNOWN</small>
+          </div>
+          <dl class="cyber-profile-facts">
+            <div>
+              <dt>外观性别 / GENDER</dt>
+              <dd id="cyber-profile-gender">--</dd>
+            </div>
+            <div>
+              <dt>义体等级 / CYBERWARE</dt>
+              <dd id="cyber-profile-level">--</dd>
+            </div>
+          </dl>
+          <div class="cyber-level-meter" id="cyber-level-meter"
+               role="meter" aria-label="Cyberware level" aria-valuemin="0"
+               aria-valuemax="5" aria-valuenow="0">
+            <span></span><span></span><span></span>
+            <span></span><span></span><span></span>
+          </div>
+          <div class="cyber-profile-brief">
+            <span>NEURAL ABSTRACT // 意识摘要</span>
+            <p id="cyber-profile-intro">等待 FLUX 画像写入视觉分析链路……</p>
+          </div>
+          <div class="cyber-profile-source">
+            <span>VISION INTEL // DEEPSEEK</span>
+            <b id="cyber-profile-packet">PACKET ---</b>
+          </div>
+        </aside>
       </div>
       <div class="mesh-foot">
         <span>主界面：拖动旋转，滚轮缩放 / INTERACTIVE 3D</span>
         <span>画中画：FLUX 特工档案 / PORTRAIT PIP</span>
+        <span>右栏：访客赛博资料 / DOSSIER</span>
         <span>TOPIC // /ghost/reconstruction/model_url</span>
       </div>
     </section>

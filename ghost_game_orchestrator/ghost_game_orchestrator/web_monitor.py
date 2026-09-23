@@ -212,6 +212,93 @@ class _TtsStore:
         return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
 
 
+class _CyberProfileStore:
+    """Latest sanitized img2doc dossier for the dashboard."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._sequence = 0
+        self._payload = self._empty_payload()
+
+    @staticmethod
+    def _empty_payload(status='idle'):
+        return {
+            'status': status,
+            'request_id': '',
+            'character_name': '',
+            'codename': '',
+            'character_gender': '',
+            'role': '',
+            'cyberware_level': {'code': '', 'name': ''},
+            'introduction': '',
+            'error_message': '',
+            'updated_at': None,
+        }
+
+    def begin(self):
+        with self._lock:
+            self._sequence += 1
+            self._payload = self._empty_payload('generating')
+            self._payload['updated_at'] = time.time()
+
+    def reset(self):
+        with self._lock:
+            self._sequence += 1
+            self._payload = self._empty_payload()
+
+    def set_json(self, json_text):
+        try:
+            update = json.loads(json_text)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(update, dict):
+            return False
+        status = str(update.get('status', '')).strip().lower()
+        if status not in ('running', 'success', 'error'):
+            return False
+        payload = self._empty_payload(status)
+        payload['request_id'] = str(update.get('request_id', ''))[:128]
+        if status == 'success':
+            level = update.get('cyberware_level')
+            if not isinstance(level, dict):
+                return False
+            required = (
+                'character_name', 'codename', 'character_gender', 'role',
+                'introduction',
+            )
+            if any(not isinstance(update.get(key), str) or
+                   not update[key].strip() for key in required):
+                return False
+            payload.update({
+                'character_name': update['character_name'].strip()[:32],
+                'codename': update['codename'].strip()[:16],
+                'character_gender': update['character_gender'].strip()[:8],
+                'role': update['role'].strip()[:64],
+                'cyberware_level': {
+                    'code': str(level.get('code', '')).strip()[:8],
+                    'name': str(level.get('name', '')).strip()[:32],
+                },
+                'introduction': update['introduction'].strip()[:500],
+            })
+        elif status == 'error':
+            payload['error_message'] = str(
+                update.get('error_message', '资料生成失败'))[:500]
+        payload['updated_at'] = time.time()
+        with self._lock:
+            self._sequence += 1
+            self._payload = payload
+        return True
+
+    def get_json(self):
+        with self._lock:
+            payload = dict(self._payload)
+            payload['cyberware_level'] = dict(
+                self._payload['cyberware_level'])
+            payload['sequence'] = self._sequence
+        return json.dumps(
+            payload, ensure_ascii=False, separators=(',', ':'))
+
+
 class _MeshStore:
     """Latest GLB model, seeded from disk and replaceable by a ROS URL.
 
@@ -499,6 +586,7 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     camera_store: _CameraStore = None  # bound by GhostGameWebMonitor before serving
     reconstruction_image_store: _ReconstructionImageStore = None
     tts_store: _TtsStore = None        # bound by GhostGameWebMonitor before serving
+    cyber_profile_store: _CyberProfileStore = None
     mesh_store: _MeshStore = None      # local fallback + latest URL model
     control_bridge: _ControlBridge = None
     urdf_text: str = None              # expanded URDF XML, or None if unavailable
@@ -529,6 +617,14 @@ class _StateHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path in ('/api/tts', '/api/tts/'):
             payload = self.tts_store.get_json() if self.tts_store else '{}'
             self._send_bytes(payload.encode('utf-8'), 'application/json; charset=utf-8')
+            return
+        if path in ('/api/profile', '/api/profile/'):
+            payload = (
+                self.cyber_profile_store.get_json()
+                if self.cyber_profile_store else '{}'
+            )
+            self._send_bytes(
+                payload.encode('utf-8'), 'application/json; charset=utf-8')
             return
         if path in ('/api/mesh', '/api/mesh/',
                     '/api/mesh/info', '/api/mesh/info/'):
@@ -610,6 +706,7 @@ class GhostGameWebMonitor(Node):
         super().__init__('ghost_game_web_monitor')
         self.declare_parameter('state_topic', '/ghost_game_node/state')
         self.declare_parameter('tts_text_topic', '/ghost/tts/caption')
+        self.declare_parameter('cyber_profile_topic', '/ghost/profile/card')
         self.declare_parameter('start_service', '/ghost_game_node/start')
         self.declare_parameter('abort_service', '/ghost_game_node/abort')
         self.declare_parameter(
@@ -655,6 +752,16 @@ class GhostGameWebMonitor(Node):
         self._tts_store = _TtsStore()
         tts_text_topic = self.get_parameter('tts_text_topic').value
         self.create_subscription(String, tts_text_topic, self._on_tts_text, 10)
+
+        self._cyber_profile_store = _CyberProfileStore()
+        profile_qos = QoSProfile(depth=1)
+        profile_qos.reliability = ReliabilityPolicy.RELIABLE
+        profile_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.create_subscription(
+            String,
+            self.get_parameter('cyber_profile_topic').value,
+            self._on_cyber_profile,
+            profile_qos)
 
         self._control_bridge = _ControlBridge()
         self._control_clients = {
@@ -715,6 +822,8 @@ class GhostGameWebMonitor(Node):
         _StateHTTPRequestHandler.reconstruction_image_store = (
             self._reconstruction_image_store)
         _StateHTTPRequestHandler.tts_store = self._tts_store
+        _StateHTTPRequestHandler.cyber_profile_store = (
+            self._cyber_profile_store)
         _StateHTTPRequestHandler.mesh_store = self._mesh_store
         _StateHTTPRequestHandler.control_bridge = self._control_bridge
         if self.get_parameter('enable_robot_model').value:
@@ -751,9 +860,11 @@ class GhostGameWebMonitor(Node):
                 self._last_reconstruction_status != 'submitted'):
             self._mesh_store.begin_pipeline()
             self._reconstruction_image_store.clear()
+            self._cyber_profile_store.begin()
         elif status == 'idle' and self._last_reconstruction_status != 'idle':
             self._mesh_store.reset_pipeline()
             self._reconstruction_image_store.clear()
+            self._cyber_profile_store.reset()
         self._last_reconstruction_status = status
 
     def _on_camera(self, msg: CompressedImage):
@@ -767,6 +878,12 @@ class GhostGameWebMonitor(Node):
 
     def _on_tts_text(self, msg: String):
         self._tts_store.set(msg.data)
+
+    def _on_cyber_profile(self, msg: String):
+        if not self._cyber_profile_store.set_json(msg.data):
+            self.get_logger().warning(
+                'Ignoring malformed img2doc cyber profile',
+                throttle_duration_sec=2.0)
 
     def _on_mesh_url(self, msg: String):
         if not msg.data.strip():

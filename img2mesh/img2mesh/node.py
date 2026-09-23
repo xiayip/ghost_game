@@ -47,7 +47,8 @@ def validate_settings(values):
         return 'face_limit 必须是整数'
     if not low <= values['face_limit'] <= high:
         return f'face_limit 必须在 {low}～{high} 之间'
-    for name in ('input_compressed', 'texture', 'pbr', 'quad', 'auto_submit', 'style_enabled',
+    for name in ('input_compressed', 'texture', 'pbr', 'quad', 'delight',
+                 'auto_submit', 'style_enabled',
                  'style_save_output', 'log_each_image'):
         if not isinstance(values[name], bool):
             return f'{name} 必须是布尔值'
@@ -62,6 +63,14 @@ def validate_settings(values):
         return 'style_output_directory 必须是非空路径字符串'
     if values['pbr'] and not values['texture']:
         return 'pbr=true 会强制开启 texture，请一并设置 texture=true'
+    if values['texture_version'] not in (
+            'v2.5-20250123', 'v3.0-20250812', 'v3.5-20260815'):
+        return 'texture_version 不受支持'
+    if values['texture_quality'] not in ('fast', 'standard', 'detailed', 'extreme'):
+        return 'texture_quality 必须为 fast、standard、detailed 或 extreme'
+    if (values['texture_quality'] == 'fast' and
+            values['texture_version'] != 'v3.5-20260815'):
+        return 'texture_quality=fast 需要 texture_version=v3.5-20260815'
     for name in ('poll_interval_sec', 'request_timeout_sec', 'task_timeout_sec',
                  'auto_interval_sec', 'style_request_timeout_sec'):
         value = values[name]
@@ -431,21 +440,33 @@ class Img2MeshNode(Node):
                 f'开始上传{upload_kind}至 Tripo request_id={request_id} '
                 f'bytes={len(png_for_mesh)}'
             )
+            upload_started_at = time.monotonic()
             file_token = client.upload_png(png_for_mesh)
+            upload_elapsed_sec = time.monotonic() - upload_started_at
             self.get_logger().info(
-                f'{upload_kind}上传成功 request_id={request_id}'
+                f'{upload_kind}上传成功 request_id={request_id} '
+                f'upload_sec={upload_elapsed_sec:.3f}'
             )
             image_input = file_token
             self.get_logger().info(
                 f'开始提交三维生成任务 request_id={request_id} '
-                f'face_limit={settings["face_limit"]}'
+                f'face_limit={settings["face_limit"]} '
+                f'texture={settings["texture"]} pbr={settings["pbr"]} '
+                f'texture_version={settings["texture_version"]} '
+                f'texture_quality={settings["texture_quality"]} '
+                f'delight={settings["delight"]}'
             )
+            submit_started_at = time.monotonic()
             task_id = client.submit_image(
                 image_input, settings['model'], settings['face_limit'],
                 settings['texture'], settings['pbr'], settings['quad'],
+                settings['texture_version'], settings['texture_quality'],
+                settings['delight'],
             )
+            submit_elapsed_sec = time.monotonic() - submit_started_at
             self.get_logger().info(
-                f'三维生成任务已提交 request_id={request_id} task_id={task_id}'
+                f'三维生成任务已提交 request_id={request_id} task_id={task_id} '
+                f'submit_sec={submit_elapsed_sec:.3f}'
             )
             self._updates.put(self._result(
                 image, request_id, settings, status='queued', task_id=task_id,
@@ -460,9 +481,17 @@ class Img2MeshNode(Node):
                         style_task_id=style_task_id, style_image_url=style_image_url,
                     ))
 
+            generation_started_at = time.monotonic()
             output = client.wait_for_task(
                 task_id, settings['poll_interval_sec'], settings['task_timeout_sec'],
                 self._stop, on_progress,
+            )
+            generation_elapsed_sec = time.monotonic() - generation_started_at
+            self.get_logger().info(
+                f'Tripo 阶段计时 request_id={request_id} '
+                f'upload_sec={upload_elapsed_sec:.3f} '
+                f'submit_sec={submit_elapsed_sec:.3f} '
+                f'generation_sec={generation_elapsed_sec:.3f}'
             )
             self._updates.put(self._result(
                 image, request_id, settings, status='success', task_id=task_id,

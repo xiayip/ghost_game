@@ -11,6 +11,7 @@ COMMON_PARAMETER_NAMES = {
     'image_topic', 'input_compressed', 'style_prompt_topic', 'result_topic', 'status_topic',
     'model_url_topic', 'submit_service',
     'mode', 'api_base_url', 'model', 'face_limit', 'texture', 'pbr', 'quad',
+    'texture_version', 'texture_quality', 'delight',
     'auto_submit', 'auto_interval_sec', 'log_each_image', 'style_enabled',
     'style_server_url', 'style_request_timeout_sec', 'style_save_output',
     'style_output_directory', 'poll_interval_sec', 'request_timeout_sec',

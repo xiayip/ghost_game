@@ -26,6 +26,8 @@ def generate_launch_description():
         "enable_mesh_reconstruction")
     mesh_reconstruction_config = LaunchConfiguration(
         "mesh_reconstruction_config")
+    enable_cyber_profile = LaunchConfiguration("enable_cyber_profile")
+    cyber_profile_config = LaunchConfiguration("cyber_profile_config")
     enable_web_monitor = LaunchConfiguration("enable_web_monitor")
     web_mesh_model_path = LaunchConfiguration("web_mesh_model_path")
     web_mesh_url_topic = LaunchConfiguration("web_mesh_url_topic")
@@ -142,6 +144,20 @@ def generate_launch_description():
                     [FindPackageShare("img2mesh"), "config", "ghost_game.yaml"]
                 ),
                 description="Ghost-specific img2mesh parameter file",
+            ),
+            DeclareLaunchArgument(
+                "enable_cyber_profile",
+                default_value="true",
+                description=(
+                    "Generate a structured cyber dossier from each FLUX portrait"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "cyber_profile_config",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("img2doc"), "config", "img2doc.yaml"]
+                ),
+                description="Ghost-specific img2doc parameter file",
             ),
             DeclareLaunchArgument(
                 "enable_tts",
@@ -311,6 +327,14 @@ def generate_launch_description():
                 output="screen",
                 parameters=[mesh_reconstruction_config],
                 condition=IfCondition(enable_mesh_reconstruction),
+            ),
+            Node(
+                package="img2doc",
+                executable="img2doc_node",
+                name="img2doc",
+                output="screen",
+                parameters=[cyber_profile_config],
+                condition=IfCondition(enable_cyber_profile),
             ),
             Node(
                 package="ghost_game_orchestrator",

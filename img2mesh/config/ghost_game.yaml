@@ -13,9 +13,14 @@ img2mesh:
     mode: single
     api_base_url: https://openapi.tripo3d.ai/v3
     model: P1-20260311
-    face_limit: 8000
+    # Hackathon fast profile: a head remains recognizable at 4k faces, while
+    # v3.5 fast texture avoids the long standard PBR material stage.
+    face_limit: 4000
     texture: true
-    pbr: true
+    pbr: false
+    texture_version: v3.5-20260815
+    texture_quality: fast
+    delight: false
     quad: false
 
     # /ghost/reconstruction/image_png emits once when FLUX succeeds. Each new
@@ -31,7 +36,7 @@ img2mesh:
     style_save_output: false
     style_output_directory: ~/img2mesh_style_outputs
 
-    poll_interval_sec: 3.0
+    poll_interval_sec: 1.0
     request_timeout_sec: 20.0
     task_timeout_sec: 900.0
 

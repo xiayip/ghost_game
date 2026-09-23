@@ -15,6 +15,9 @@ img2mesh:
     face_limit: 8000  # P1：50–20000；P2 三角面：48–50000；P2 四边面：48–25000
     texture: true
     pbr: true
+    texture_version: v3.0-20250812
+    texture_quality: standard
+    delight: true
     quad: false  # 可选：false（三角面）、true（四边面；仅 P2 支持）
 
     auto_submit: false

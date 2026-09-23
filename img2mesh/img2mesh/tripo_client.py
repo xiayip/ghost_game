@@ -65,7 +65,9 @@ class TripoClient:
             # A presigned URL contains a signature. Do not copy its URL into ROS logs.
             raise TripoError('上传 PNG 网络请求失败') from exc
 
-    def submit_image(self, image_input, model, face_limit, texture, pbr, quad):
+    def submit_image(self, image_input, model, face_limit, texture, pbr, quad,
+                     texture_version='v3.0-20250812',
+                     texture_quality='standard', delight=True):
         body = {
             'input': image_input,
             'model': model,
@@ -75,6 +77,11 @@ class TripoClient:
         }
         if quad:
             body['quad'] = True
+        if texture:
+            body['texture_version'] = texture_version
+            body['texture_quality'] = texture_quality
+            if texture_version == 'v3.5-20260815':
+                body['delight'] = delight
         try:
             response = self.session.post(
                 f'{self.base_url}/generation/image-to-model',
