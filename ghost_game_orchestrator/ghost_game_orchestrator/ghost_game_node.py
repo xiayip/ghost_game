@@ -449,9 +449,9 @@ class GhostGameNode(Node):
         self.declare_parameter('face_scan_min_motion_time', 0.6)
         self.declare_parameter('face_scan_hold_time', 2.0)
         self.declare_parameter('face_search_timeout', 0.0)
-        self.declare_parameter('face_center_gain', 0.80)
+        self.declare_parameter('face_center_gain', 1.80)
         self.declare_parameter('face_servo_rate_hz', 60.0)
-        self.declare_parameter('face_servo_max_joint_speed', 0.25)
+        self.declare_parameter('face_servo_max_joint_speed', 0.70)
         self.declare_parameter('face_servo_detection_timeout', 0.20)
         self.declare_parameter('face_center_tolerance', 0.08)
         self.declare_parameter('face_center_release_tolerance', 0.12)
@@ -479,6 +479,7 @@ class GhostGameNode(Node):
         # deviation, torque = stiffness * error stays well below the ceiling.
         self.declare_parameter('home_stiffness', [10.0, 8.0, 8.0, 6.0, 4.0, 4.0])
         self.declare_parameter('home_damping', [2.0, 4.0, 3.5, 3.0, 2.5, 1.5])
+        self.declare_parameter('home_position_tolerance', 0.16)
         self.declare_parameter('home_time_from_start', 4.0)
         # Seed goal duration before the real return-home move - see _return_home.
         self.declare_parameter('home_seed_time', 0.1)
@@ -623,6 +624,8 @@ class GhostGameNode(Node):
         self.home_positions = list(p('home_positions').value)
         self.home_stiffness = list(p('home_stiffness').value)
         self.home_damping = list(p('home_damping').value)
+        self.home_position_tolerance = float(
+            p('home_position_tolerance').value)
         self.home_time_from_start = float(p('home_time_from_start').value)
         self.home_seed_time = float(p('home_seed_time').value)
         self.stuck_retreat_fraction = float(p('stuck_retreat_fraction').value)
@@ -1743,7 +1746,7 @@ class GhostGameNode(Node):
     def _wait_home_or_stall(self):
         """Poll measured position instead of blocking for the whole
         home_time_from_start: returns as soon as every joint is within
-        match_tolerance of home_positions (arrived), or as soon as any joint
+        home_position_tolerance of home_positions (arrived), or as soon as any joint
         that isn't there yet has barely moved over the last
         stuck_stall_window seconds (stalled/blocked) - whichever is sooner.
         This is what makes "stuck" detection fast instead of only ever
@@ -1762,7 +1765,8 @@ class GhostGameNode(Node):
         while time.monotonic() < deadline:
             time.sleep(self.stuck_check_period)
             positions = self._positions_snapshot()
-            if all(pos is not None and abs(pos - self.home_positions[i]) <= self.match_tolerance
+            if all(pos is not None and
+                   abs(pos - self.home_positions[i]) <= self.home_position_tolerance
                    for i, pos in enumerate(positions)):
                 return True, positions
             now = time.monotonic()
@@ -1774,7 +1778,8 @@ class GhostGameNode(Node):
             if now - last_check_time >= self.stuck_stall_window:
                 stalled = any(
                     positions[i] is not None and last_positions[i] is not None
-                    and abs(positions[i] - self.home_positions[i]) > self.match_tolerance
+                    and abs(positions[i] - self.home_positions[i]) >
+                    self.home_position_tolerance
                     and abs(positions[i] - last_positions[i]) < self.stuck_stall_movement
                     for i in range(n)
                 )
@@ -1846,7 +1851,7 @@ class GhostGameNode(Node):
         if not arrived:
             self.get_logger().warn(
                 'Return-home looks stuck/blocked (did not reach home_positions within '
-                f'{self.match_tolerance} rad) - backing off and releasing stiffness')
+                f'{self.home_position_tolerance} rad) - backing off and releasing stiffness')
             retreat_positions = [
                 start_positions[i] if pos is None else pos + self.stuck_retreat_fraction * (start_positions[i] - pos)
                 for i, pos in enumerate(positions)

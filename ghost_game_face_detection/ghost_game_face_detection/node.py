@@ -38,7 +38,7 @@ class NearestFaceNode(Node):
         self.declare_parameter('bbox_expand_right_ratio', 0.35)
         self.declare_parameter('bbox_expand_top_ratio', 0.55)
         self.declare_parameter('bbox_expand_bottom_ratio', 0.30)
-        self.declare_parameter('max_processing_rate', 15.0)
+        self.declare_parameter('max_processing_rate', 30.0)
         self.declare_parameter('detector_input_width', 424)
         self.declare_parameter('publish_debug_image', True)
         self.declare_parameter('jpeg_quality', 85)

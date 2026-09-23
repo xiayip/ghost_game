@@ -116,7 +116,7 @@ ghost_game_node:
     face_detection_max_age: 1.0
     face_min_bbox_area_ratio: 0.015
     face_max_bbox_area_ratio: 0.65
-    # At 15 Hz this requires roughly five consecutive frames. Identity-jump
+    # At 30 Hz this requires roughly ten consecutive frames. Identity-jump
     # rejection remains active after acquisition.
     face_stable_time: 0.30
     face_stability_center_tolerance: 0.08
@@ -159,11 +159,16 @@ ghost_game_node:
 
     # Continuous visual servo after a stable face is acquired. Normalized
     # image error becomes joint speed; targets stream directly to the MIT
-    # impedance controller at 60 Hz while the 15 Hz detector supplies fresh
-    # error samples. This removes per-correction trajectory startup latency.
-    face_center_gain: 0.80           # rad/s at normalized image error 1.0
+    # impedance controller at 60 Hz while the 30 Hz detector supplies fresh
+    # error samples. Hardware profiling showed the controller tracking within
+    # ~0.01 rad while the old 0.25 rad/s servo limit remained saturated, so
+    # use a faster gimbal-like command with margin below the controller's
+    # 1.0 rad/s wrist reference limit. The second hardware profile kept the
+    # J5 tracking-error p95 at 0.018 rad with a 0.50 rad/s limit, leaving room
+    # for a 0.70 rad/s show setting without running at the controller ceiling.
+    face_center_gain: 1.80           # rad/s at normalized image error 1.0
     face_servo_rate_hz: 60.0
-    face_servo_max_joint_speed: 0.25 # rad/s, also bounds scan peak speed
+    face_servo_max_joint_speed: 0.70 # rad/s; scan keeps its separate 0.25 limit
     # Freeze immediately when the detector stops refreshing, while allowing
     # face_target_lost_timeout for reacquisition before resuming the scan.
     face_servo_detection_timeout: 0.20
@@ -209,6 +214,10 @@ ghost_game_node:
     # a lower stiffness meaningfully lowers force for a typical blocked hand.
     home_stiffness: [10.0, 8.0, 8.0, 6.0, 4.0, 4.0]
     home_damping: [2.0, 4.0, 3.5, 3.0, 2.5, 1.5]
+    # Return-home has its own tolerance: the soft impedance hold can settle in
+    # a static-friction dead zone near home. Keep the tighter match_tolerance
+    # above exclusively for finding Ghost fragments.
+    home_position_tolerance: 0.16
     home_time_from_start: 4.0
     # Short seed goal to the JTC at the current live pose before the real
     # move - see _return_home for why (stale-setpoint fix).
