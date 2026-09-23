@@ -110,6 +110,24 @@ print(f'sounddevice:  {sounddevice.__version__}')
 print(f'Voice model:  {model}')
 PY
 
+# The preferred route is the host Pulse/PipeWire Unix socket mounted by
+# .devcontainer/devcontainer.json.  Containers created before that mount was
+# added use the loopback TCP bridge in ghost_tts.engine instead.  Check both
+# here so a dependency install cannot appear healthy while playback is mute.
+if [[ -S /run/user/1000/pulse/native ]]; then
+  echo "Audio route:  host Pulse socket /run/user/1000/pulse/native"
+elif timeout 1 bash -c '</dev/tcp/127.0.0.1/4713' 2>/dev/null; then
+  echo "Audio route:  host Pulse loopback bridge tcp:127.0.0.1:4713"
+else
+  cat >&2 <<'EOF'
+WARNING: no host Pulse/PipeWire route is reachable from this container.
+For an older host-network container, run this once in a HOST terminal:
+  pactl load-module module-native-protocol-tcp listen=127.0.0.1 auth-ip-acl=127.0.0.1
+The durable fix is to recreate the devcontainer so its Pulse socket mount and
+PULSE_SERVER setting from .devcontainer/devcontainer.json take effect.
+EOF
+fi
+
 cat <<EOF
 
 Ghost Game TTS dependencies are ready for user ${TARGET_USER}.

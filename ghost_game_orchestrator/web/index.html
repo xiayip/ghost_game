@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ghost Game // Arm Telemetry</title>
+  <title>寻找 Ghost // Shell Infiltration</title>
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {
@@ -20,8 +20,9 @@
   <div class="wrap">
     <header>
       <div>
-        <div class="eyebrow">Find The Ghost</div>
-        <div class="title">Arm Telemetry</div>
+        <div class="eyebrow">Find The Ghost // 寻找幽灵</div>
+        <div class="title">Shell Infiltration Protocol</div>
+        <div class="title-cn">壳层潜入协议</div>
       </div>
       <div class="conn" id="conn">
         <span class="dot" id="conn-dot"></span>
@@ -30,20 +31,95 @@
     </header>
 
     <div class="status-row">
-      <span class="badge" id="phase-badge">phase: --</span>
-      <span class="found-count" id="found-count">found <b>0</b>/<b>0</b></span>
+      <span class="badge" id="phase-badge">系统阶段 / PHASE: --</span>
+      <span class="found-count" id="found-count">碎片回收 / FRAGMENTS <b>0</b>/<b>0</b></span>
     </div>
 
+    <section class="control-deck" aria-label="Ghost Game controls / 游戏控制">
+      <div class="control-heading">
+        <span class="eyebrow">// Operator Console</span>
+        <strong>操作员控制台</strong>
+        <button class="stealth-control" type="button" data-control="mock_solve"
+                aria-label="Mock solve / 自动到达秘密姿态" title="DEV: MOCK_SOLVE">
+          <span>&micro;</span><small>MOCK_SOLVE</small>
+        </button>
+      </div>
+      <div class="control-actions">
+        <button class="control-btn start" type="button" data-control="start">
+          <i>01</i><span>启动任务<small>START MISSION</small></span>
+        </button>
+        <button class="control-btn abort" type="button" data-control="abort">
+          <i>!</i><span>中止任务<small>ABORT MISSION</small></span>
+        </button>
+        <button class="control-btn home" type="button" data-control="return_home">
+          <i>00</i><span>返回待机位<small>RETURN HOME</small></span>
+        </button>
+      </div>
+      <div class="control-feedback" id="control-feedback" data-tone="ready" aria-live="polite">
+        <i></i>
+        <span><strong id="control-status-cn">控制链路待命</strong><small id="control-status-en">CONTROL LINK READY</small></span>
+      </div>
+    </section>
+
+    <section class="mission-panel" id="mission-panel" aria-live="polite" aria-atomic="true">
+      <div class="mission-copy">
+        <div class="mission-kicker">
+          <span>MISSION_<b id="mission-chapter">00</b></span>
+          <span id="mission-signal">LINK STANDBY</span>
+        </div>
+        <h1 id="mission-title-cn">等待 Ghost 潜入 Shell</h1>
+        <p class="mission-title-en" id="mission-title-en">AWAITING GHOST INFILTRATION</p>
+        <div class="mission-guide">
+          <span class="guide-tag">行动指令<br><small>DIRECTIVE</small></span>
+          <div>
+            <strong id="mission-guide-cn">启动交互协议，建立意识连接。</strong>
+            <span id="mission-guide-en">Initiate the protocol to open a neural link.</span>
+          </div>
+        </div>
+      </div>
+      <ol class="mission-route" id="mission-route" aria-label="Game progress / 游戏进程">
+        <li data-step="0"><i>01</i><span>接入壳层<small>INFILTRATE</small></span></li>
+        <li data-step="1"><i>02</i><span>回收碎片<small>RECOVER</small></span></li>
+        <li data-step="2"><i>03</i><span>视觉锁定<small>ACQUIRE</small></span></li>
+        <li data-step="3"><i>04</i><span>意识苏醒<small>AWAKEN</small></span></li>
+      </ol>
+    </section>
+
+    <section class="voice-terminal idle" id="voice-terminal" aria-live="polite" aria-atomic="true">
+      <div class="voice-terminal-head">
+        <span class="voice-channel"><i></i> GHOST // VOICE_LINK</span>
+        <span class="voice-packet" id="voice-packet">CHANNEL STANDBY</span>
+      </div>
+      <div class="voice-screen">
+        <span class="voice-prompt" aria-hidden="true">&gt;</span>
+        <p class="voice-text" id="voice-text">等待意识语音链路接入……</p>
+        <span class="voice-cursor" aria-hidden="true"></span>
+      </div>
+      <div class="voice-meta">
+        <span>NEURAL AUDIO BUS</span>
+        <span>CH_01 // CN</span>
+      </div>
+    </section>
+
     <div class="layout" id="arm-layout">
-      <div class="grid" id="joint-grid"></div>
+      <section class="fragment-bank">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">// Ghost Fragments</span>
+            <strong>意识碎片阵列</strong>
+          </div>
+          <span class="section-code">MEMORY_SHARDS</span>
+        </div>
+        <div class="grid" id="joint-grid"></div>
+      </section>
       <div class="viewport" id="viewport">
-        <div class="eyebrow viewport-label">// Arm Pose</div>
+        <div class="eyebrow viewport-label">// Shell Kinematic Map // 壳层姿态</div>
       </div>
     </div>
 
     <div class="camera-panel locked" id="camera-panel">
       <div class="camera-head">
-        <span class="eyebrow">// Camera</span>
+        <span class="eyebrow">// Optical Nerve // 视觉神经</span>
         <button class="toggle-btn" id="camera-toggle" aria-expanded="true" title="Collapse/expand camera feed">&#9662;</button>
       </div>
       <div class="camera-body" id="camera-body">

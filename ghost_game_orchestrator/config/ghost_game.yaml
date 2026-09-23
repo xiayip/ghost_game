@@ -84,20 +84,24 @@ ghost_game_node:
     success_accelerations: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     success_seed_time: 0.2
     success_time_from_start: 8.0
+    # Keep the visitor-facing joint locks compliant, then ramp only the
+    # solved/display phase. Joint3 occasionally stopped about 0.061 rad short
+    # at kp=25; kp=35 supplies more corrective torque without changing the
+    # FREE/LOCKING/LOCKED feel during the game.
+    success_stiffness: [30.0, 30.0, 35.0, 18.0, 12.0, 12.0]
     # Independent measured-pose acceptance for the success turn. The shared
     # impedance JTC keeps its stricter 0.03 rad goal tolerance; this local
     # check accepts the real arm's repeatable small static residual only after
     # all joints remain settled, so an actually blocked/unfinished move still
     # aborts and never reveals the camera.
-    # joint2 showed a ~0.048 rad static residual at this loaded pose. Keep
-    # enough margin for run-to-run load variation while still requiring the
-    # measured pose to remain settled for success_settle_time.
-    # accept it locally for the game transition without weakening the shared
-    # JTC/controller tolerances used by other motions.
-    success_position_tolerance: [0.05, 0.08, 0.04, 0.04, 0.04, 0.04]
-    # On hardware, joint3 was still 0.0479 rad from target after 2 s, then
-    # converged below 0.001 rad. Allow the real impedance arm to finish
-    # settling while retaining the tighter per-joint acceptance limits above.
+    # Hardware logs show joint2 repeatedly settling around 0.048 rad. Joint3
+    # normally reaches <0.002 rad, but one loaded run remained at 0.061 rad
+    # after the full validation window. A 0.07 rad local allowance still sits
+    # well below the controller's 0.12 rad blocked-motion threshold and is
+    # sufficient for the following camera servo to acquire the visitor.
+    success_position_tolerance: [0.05, 0.08, 0.07, 0.04, 0.04, 0.04]
+    # Allow the real impedance arm to finish settling while retaining the
+    # measured-position and motion checks above.
     success_validation_timeout: 6.0
     success_settle_time: 0.5
     success_settle_movement: 0.01
@@ -157,11 +161,16 @@ ghost_game_node:
 
     # Continuous visual servo after a stable face is acquired. Normalized
     # image error becomes joint speed; targets stream directly to the MIT
-    # impedance controller at 60 Hz while the <=30 Hz detector supplies fresh
-    # error samples. This removes per-correction trajectory startup latency.
-    face_center_gain: 0.80           # rad/s at normalized image error 1.0
+    # impedance controller at 60 Hz while the 30 Hz detector supplies fresh
+    # error samples. Hardware profiling showed the controller tracking within
+    # ~0.01 rad while the old 0.25 rad/s servo limit remained saturated, so
+    # use a faster gimbal-like command with margin below the controller's
+    # 1.0 rad/s wrist reference limit. The second hardware profile kept the
+    # J5 tracking-error p95 at 0.018 rad with a 0.50 rad/s limit, leaving room
+    # for a 0.70 rad/s show setting without running at the controller ceiling.
+    face_center_gain: 1.80           # rad/s at normalized image error 1.0
     face_servo_rate_hz: 60.0
-    face_servo_max_joint_speed: 0.25 # rad/s, also bounds scan peak speed
+    face_servo_max_joint_speed: 0.70 # rad/s; scan keeps its separate 0.25 limit
     # Freeze immediately when the detector stops refreshing, while allowing
     # face_target_lost_timeout for reacquisition before resuming the scan.
     face_servo_detection_timeout: 0.15
@@ -213,6 +222,10 @@ ghost_game_node:
     # a lower stiffness meaningfully lowers force for a typical blocked hand.
     home_stiffness: [10.0, 8.0, 8.0, 6.0, 4.0, 4.0]
     home_damping: [2.0, 4.0, 3.5, 3.0, 2.5, 1.5]
+    # Return-home has its own tolerance: the soft impedance hold can settle in
+    # a static-friction dead zone near home. Keep the tighter match_tolerance
+    # above exclusively for finding Ghost fragments.
+    home_position_tolerance: 0.16
     home_time_from_start: 4.0
     # Short seed goal to the JTC at the current live pose before the real
     # move - see _return_home for why (stale-setpoint fix).
