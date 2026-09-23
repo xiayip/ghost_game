@@ -2,8 +2,8 @@
 
 `ghost_tts` is the offline Chinese voice output for Ghost Game. It uses a
 Piper CPU model, applies a selectable electronic voice effect, and plays on
-the host running the node. Text jobs are bounded, queued in order, and can be
-cancelled without blocking the ROS executor.
+the host running the node. Text jobs are bounded, queued in order, and exposed
+as cancellable ROS 2 Actions without blocking the robot control executor.
 
 The unified application launch starts this package automatically:
 
@@ -30,6 +30,16 @@ The package can also run by itself:
 
 ```bash
 ros2 launch ghost_tts ghost_tts.launch.py preset:=ghost audio_device:=pulse
+ros2 action send_goal /ghost/tts/speak \
+  ghost_game_interfaces/action/Speak \
+  "{text: '系统已苏醒。意识端口已经接入。', interrupt: false}" --feedback
+
+# Stops active playback, clears queued speech, then speaks immediately.
+ros2 action send_goal /ghost/tts/speak \
+  ghost_game_interfaces/action/Speak \
+  "{text: '紧急链路接管。', interrupt: true}" --feedback
+
+# Backward-compatible topic/service API:
 ros2 topic pub --once /ghost/tts/text std_msgs/msg/String \
   "{data: '系统已苏醒。意识端口已经接入。'}"
 ros2 service call /ghost/tts/stop std_srvs/srv/Trigger '{}'
@@ -67,7 +77,15 @@ ros2 run ghost_tts ghost_tts_preview --play \
   --text '正在接入幽灵协议。'
 ```
 
-The node publishes JSON job events on `/ghost/tts/status`, aggregate activity
-on `/ghost/tts/busy`, and playback activity on `/ghost/tts/speaking`. See the
+The Action returns after playback and reports
+`queued/synthesizing/processing/playing/done` feedback. Client cancellation
+stops only its specific queued or active job. A goal with `interrupt=true`
+preempts all older speech; preempted goals finish as aborted with message
+`preempted`, because ROS 2 reserves the canceled terminal state for explicit
+client cancellation.
+
+The node publishes accepted text on `/ghost/tts/caption`, JSON job events on
+`/ghost/tts/status`, aggregate activity on `/ghost/tts/busy`, and playback
+activity on `/ghost/tts/speaking`. See the
 top-level Ghost Game README for game cue configuration and `THIRD_PARTY.md`
 for dependency and voice-model licensing notes.

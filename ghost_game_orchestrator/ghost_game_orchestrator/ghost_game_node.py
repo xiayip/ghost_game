@@ -23,8 +23,9 @@ Flow:
   7. Optionally switch to the position-control chain and play a short
      trajectory ("dance").
 
-Stage transitions publish plain-text cues to ghost_tts. TTS synthesis and
-playback remain outside this node so speech cannot block arm control.
+Stage transitions send cancellable plain-text Actions to ghost_tts. TTS
+synthesis and playback remain outside this node so speech cannot block arm
+control.
 
 Only ONE controller (mit_impedance_controller) is used for both the free
 and locked behavior per joint - "free" is just stiffness=0. No BT is
@@ -61,6 +62,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from vision_msgs.msg import Detection2DArray
+from ghost_game_interfaces.action import Speak
 
 from .face_tracking import (
     FaceStabilityGate,
@@ -326,6 +328,9 @@ class GhostGameNode(Node):
             callback_group=self._call_cb_group)
         self._tts_stop_client = self.create_client(
             Trigger, self.tts_stop_service, callback_group=self._call_cb_group)
+        self._tts_action_client = ActionClient(
+            self, Speak, self.tts_action_name,
+            callback_group=self._call_cb_group)
         # Direct topic command (not the JTC) so the reference always reflects
         # the live measured pose - see _publish_impedance_command for why.
         self._impedance_command_pub = self.create_publisher(
@@ -405,6 +410,7 @@ class GhostGameNode(Node):
         self.declare_parameter('tts_enabled', True)
         self.declare_parameter('tts_text_topic', '/ghost/tts/text')
         self.declare_parameter('tts_stop_service', '/ghost/tts/stop')
+        self.declare_parameter('tts_action_name', '/ghost/tts/speak')
         self.declare_parameter(
             'tts_setup_text', '壳层自检完成。意识端口正在接入。')
         self.declare_parameter(
@@ -630,6 +636,7 @@ class GhostGameNode(Node):
         self.tts_enabled = bool(p('tts_enabled').value)
         self.tts_text_topic = p('tts_text_topic').value
         self.tts_stop_service = p('tts_stop_service').value
+        self.tts_action_name = p('tts_action_name').value
         self.tts_setup_text = p('tts_setup_text').value
         self.tts_searching_text = p('tts_searching_text').value
         self.tts_joint_found_texts = list(p('tts_joint_found_texts').value)
@@ -915,11 +922,27 @@ class GhostGameNode(Node):
         """Queue one stage cue without ever blocking arm control."""
         if not self.tts_enabled or not isinstance(text, str) or not text.strip():
             return
-        self._tts_pub.publish(String(data=text.strip()))
+        text = text.strip()
+        if not self._send_speech_action(text,interrupt=False):
+            self._tts_pub.publish(String(data=text))
+
+    def _send_speech_action(self,text,interrupt):
+        """Submit speech asynchronously; return False for legacy fallback."""
+        client = getattr(self,'_tts_action_client',None)
+        if client is None or not client.server_is_ready():
+            return False
+        goal = Speak.Goal()
+        goal.text = text
+        goal.interrupt = bool(interrupt)
+        client.send_goal_async(goal)
+        return True
 
     def _interrupt_speech(self, text):
         """Best-effort cancellation for safety/return-home announcements."""
         if not self.tts_enabled:
+            return
+        text = text.strip()
+        if self._send_speech_action(text,interrupt=True):
             return
         if self._tts_stop_client.service_is_ready():
             future = self._tts_stop_client.call_async(Trigger.Request())

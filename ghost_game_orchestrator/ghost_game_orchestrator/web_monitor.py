@@ -19,9 +19,9 @@ Also proxies nearest_face's annotated compressed stream (sensor_msgs/
 CompressedImage, JPEG) so the dashboard shows the selected face bounding box
 - see /api/camera.jpg below.
 
-The same bridge subscribes to the plain-text command sent to ghost_tts and
-exposes the latest caption as JSON.  The browser therefore shows exactly the
-line the voice worker receives, without duplicating the game's stage script.
+The same bridge subscribes to ghost_tts's accepted-caption stream and exposes
+the latest caption as JSON. The browser therefore shows exactly the line the
+voice worker receives, without duplicating the game's stage script.
 """
 
 import functools
@@ -310,7 +310,7 @@ class GhostGameWebMonitor(Node):
     def __init__(self):
         super().__init__('ghost_game_web_monitor')
         self.declare_parameter('state_topic', '/ghost_game_node/state')
-        self.declare_parameter('tts_text_topic', '/ghost/tts/text')
+        self.declare_parameter('tts_text_topic', '/ghost/tts/caption')
         self.declare_parameter('start_service', '/ghost_game_node/start')
         self.declare_parameter('abort_service', '/ghost_game_node/abort')
         self.declare_parameter(

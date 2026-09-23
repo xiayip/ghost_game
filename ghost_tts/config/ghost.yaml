@@ -12,3 +12,5 @@ ghost_tts:
     max_text_chars: 500
     max_queue_wait_seconds: 30.0
     max_audio_seconds: 90.0
+    action_name: /ghost/tts/speak
+    caption_topic: /ghost/tts/caption

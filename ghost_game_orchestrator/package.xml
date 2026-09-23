@@ -19,6 +19,7 @@
   <depend>control_msgs</depend>
   <depend>trajectory_msgs</depend>
   <depend>vision_msgs</depend>
+  <depend>ghost_game_interfaces</depend>
   <depend>ament_index_python</depend>
 
   <!-- For the web dashboard's optional 3D robot model: expands the real

@@ -28,11 +28,26 @@ class FakeStopClient:
         return SimpleNamespace()
 
 
-def make_node(tts_enabled=True, stop_ready=False):
+class FakeActionClient:
+
+    def __init__(self, ready=False):
+        self.ready = ready
+        self.goals = []
+
+    def server_is_ready(self):
+        return self.ready
+
+    def send_goal_async(self, goal):
+        self.goals.append(goal)
+        return SimpleNamespace()
+
+
+def make_node(tts_enabled=True, stop_ready=False, action_ready=False):
     node = object.__new__(GhostGameNode)
     node.tts_enabled = tts_enabled
     node._tts_pub = RecordingPublisher()
     node._tts_stop_client = FakeStopClient(stop_ready)
+    node._tts_action_client = FakeActionClient(action_ready)
     node._wait_for_future = lambda future, timeout: True
     return node
 
@@ -100,3 +115,25 @@ def test_interrupt_still_announces_when_stop_service_is_starting():
     assert [message.data for message in node._tts_pub.messages] == [
         '返回初始位置。'
     ]
+
+
+def test_speak_uses_non_interrupting_action_when_server_is_ready():
+    node = make_node(action_ready=True)
+
+    node._speak('普通阶段提示。')
+
+    assert node._tts_pub.messages == []
+    assert len(node._tts_action_client.goals) == 1
+    assert node._tts_action_client.goals[0].text == '普通阶段提示。'
+    assert node._tts_action_client.goals[0].interrupt is False
+
+
+def test_interrupt_uses_preempting_action_without_legacy_stop_call():
+    node = make_node(stop_ready=True, action_ready=True)
+
+    node._interrupt_speech('紧急链路接管。')
+
+    assert node._tts_stop_client.requests == []
+    assert len(node._tts_action_client.goals) == 1
+    assert node._tts_action_client.goals[0].text == '紧急链路接管。'
+    assert node._tts_action_client.goals[0].interrupt is True

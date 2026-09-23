@@ -13,6 +13,7 @@ class Job:
     text: str
     created: float
     cancel: threading.Event = field(default_factory=threading.Event)
+    cancel_detail: str = ''
 
 
 def clean_text(text,max_chars):
@@ -47,7 +48,7 @@ class SpeechWorker:
     def start(self):
         self.thread.start()
 
-    def submit(self,text):
+    def submit(self,text,on_created=None):
         try:
             text = clean_text(text,self.max_chars)
         except ValueError as error:
@@ -62,19 +63,41 @@ class SpeechWorker:
                 return None
             self.sequence += 1
             job = Job(self.sequence,text,time.monotonic())
+            if on_created is not None:
+                on_created(job)
             self.pending.append(job)
             self.emit('queued',job.job_id,'')
             self.condition.notify()
             return job.job_id
 
-    def stop(self):
+    def cancel(self,job_id,reason='cancel_requested'):
+        """Cancel one active or queued job without disturbing other speech."""
+        with self.condition:
+            if self.current is not None and self.current.job_id == job_id:
+                self.current.cancel_detail = reason
+                self.current.cancel.set()
+                self.condition.notify_all()
+                return True
+            for job in list(self.pending):
+                if job.job_id != job_id:
+                    continue
+                self.pending.remove(job)
+                job.cancel.set()
+                self.emit('cancelled',job.job_id,'cleared_from_queue')
+                self.condition.notify_all()
+                return True
+            return False
+
+    def stop(self,reason=''):
         with self.condition:
             count = len(self.pending)+(1 if self.current else 0)
             while self.pending:
                 job = self.pending.popleft()
                 job.cancel.set()
-                self.emit('cancelled',job.job_id,'cleared_from_queue')
+                self.emit(
+                    'cancelled',job.job_id,reason or 'cleared_from_queue')
             if self.current:
+                self.current.cancel_detail = reason
                 self.current.cancel.set()
             self.condition.notify_all()
             return count
@@ -117,7 +140,7 @@ class SpeechWorker:
                 self.perform(resource,job,self.emit)
                 self.emit('cancelled' if job.cancel.is_set() else 'done',job.job_id,'')
             except Cancelled:
-                self.emit('cancelled',job.job_id,'')
+                self.emit('cancelled',job.job_id,job.cancel_detail)
             except Exception as error:
                 self.emit('error',job.job_id,str(error))
             finally:

@@ -94,6 +94,49 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(seen, ['active', 'new'])
         self.assertIn(('cancelled', 2, 'cleared_from_queue'), self.events)
 
+    def test_cancel_targets_one_queued_job(self):
+        release = threading.Event()
+        started = threading.Event()
+        seen = []
+        def perform(resource, job, emit):
+            seen.append(job.text)
+            if job.text == 'active':
+                started.set()
+                release.wait(3)
+        worker = self.make_worker(perform)
+        worker.start()
+        worker.submit('active')
+        self.assertTrue(started.wait(3))
+        cancelled_id = worker.submit('cancel me')
+        kept_id = worker.submit('keep me')
+
+        self.assertTrue(worker.cancel(cancelled_id))
+        self.assertFalse(worker.cancel(9999))
+        release.set()
+        eventually(lambda: ('done', kept_id, '') in self.events)
+
+        self.assertEqual(seen, ['active', 'keep me'])
+        self.assertIn(
+            ('cancelled', cancelled_id, 'cleared_from_queue'), self.events)
+
+    def test_interrupt_reason_reaches_active_and_queued_jobs(self):
+        started = threading.Event()
+        def perform(resource, job, emit):
+            started.set()
+            if job.cancel.wait(3):
+                raise Cancelled()
+        worker = self.make_worker(perform)
+        worker.start()
+        active_id = worker.submit('active')
+        self.assertTrue(started.wait(3))
+        queued_id = worker.submit('queued')
+
+        self.assertEqual(worker.stop(reason='preempted'), 2)
+        eventually(
+            lambda: ('cancelled', active_id, 'preempted') in self.events)
+
+        self.assertIn(('cancelled', queued_id, 'preempted'), self.events)
+
     def test_queue_limit_and_invalid_text(self):
         worker = self.make_worker(lambda *args: None, queue_size=1, max_chars=5)
         self.assertEqual(worker.submit('first'), 1)

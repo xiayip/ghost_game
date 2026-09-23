@@ -1,18 +1,19 @@
 # Ghost Game
 
-This repository is split into five ROS 2 packages with one-way ownership:
+This repository is split into six ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
 | --- | --- |
 | `ghost_game` | Meta package, unified launch, and the YuNet model assets used by the application. It contains no runtime Python logic. |
+| `ghost_game_interfaces` | Shared ROS 2 interfaces, including the cancellable `Speak` action. |
 | `ghost_game_face_detection` | RGB image input, nearest-face selection, `vision_msgs` bbox output, and annotated debug images. It does not know the game state. |
 | `ghost_game_orchestrator` | Game state machine, controller/gripper coordination, success flow, and terminal/web monitors. It does not implement face detection. |
 | `ghost_tts` | Offline Piper Chinese speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
 | `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its output is the prepared image input for a later image-to-3D node. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
-ghost_game_face_detection, ghost_tts, flux_image_editor}`. The functional packages do not depend
-on each other; the orchestrator sends plain-text cues to `ghost_tts` over ROS.
+ghost_game_face_detection, ghost_tts, flux_image_editor, ghost_game_interfaces}`.
+Runtime packages share only the interface package and communicate over ROS.
 
 "Find the Ghost" arm interaction demo. The arm silently picks 6 secret joint
 angles, goes compliant (damping-like), and the audience hand-guesses each
@@ -57,12 +58,14 @@ The most recent capture is also available at the stable path
 even when the FLUX inference service is offline. This directory is mounted
 from the workspace, so captures survive container recreation.
 
-Each important state transition also emits a Chinese voice cue: game setup,
+Each important state transition also emits a Chinese voice cue through the
+`/ghost/tts/speak` Action: game setup,
 search start, every newly locked joint, all-found, face scan, dance, done,
 return-home, stuck, and abort. Speech synthesis and playback run on the TTS
 worker thread, so they never block controller switching or the arm loop.
-Safety/return-home cues cancel older queued speech before announcing the new
-state.
+Safety/return-home cues send `interrupt=true`, cancel active playback and
+older queued speech, then announce the new state. The legacy text topic and
+stop service remain available for manual testing and older clients.
 
 The web dashboard keeps its camera panel hidden during the search and the
 success-pose motion. It starts displaying camera frames only after the arm has
@@ -141,7 +144,7 @@ shipping a product; see `ghost_tts/THIRD_PARTY.md`.
 source /opt/ros/jazzy/setup.bash
 cd /workspaces/zephyr-dev/zephyr_ws
 colcon build --symlink-install --packages-select \
-  ghost_tts flux_image_editor ghost_game_orchestrator \
+  ghost_game_interfaces ghost_tts flux_image_editor ghost_game_orchestrator \
   ghost_game_face_detection ghost_game
 ```
 
@@ -187,10 +190,15 @@ ros2 launch ghost_game_face_detection face_detection.launch.py \
 
 ros2 launch ghost_tts ghost_tts.launch.py audio_device:=pulse preset:=ghost
 
+# Cancellable action request. Set interrupt=true to preempt active/queued speech.
+ros2 action send_goal /ghost/tts/speak \
+  ghost_game_interfaces/action/Speak \
+  "{text: '紧急链路接管。', interrupt: true}" --feedback
+
 ros2 run flux_image_editor flux_image_editor_node --ros-args \
   --params-file $(ros2 pkg prefix flux_image_editor)/share/flux_image_editor/config/ghost_game.yaml
 
-# Queue a one-shot test line; the stop service cancels active and queued lines.
+# Legacy compatibility interface; the stop service cancels every job.
 ros2 topic pub --once /ghost/tts/text std_msgs/msg/String \
   "{data: '正在潜入深网。意识端口已经接入。'}"
 ros2 service call /ghost/tts/stop std_srvs/srv/Trigger {}
@@ -208,7 +216,7 @@ source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 # infiltration, fragment recovery, visual acquisition, and awakening; each
 # joint is presented as a recoverable GHOST FRAGMENT. The GHOST VOICE_LINK
 # panel subscribes to the same
-# /ghost/tts/text commands as the speaker and shows the latest line with a
+# /ghost/tts/caption stream and shows the latest line with a
 # cyber-pixel subtitle treatment. The operator console calls the existing
 # start, abort, and return_home Trigger services and displays the ROS result
 # in place. A deliberately low-visibility `mu` developer button in the
@@ -223,7 +231,7 @@ ros2 run ghost_game_orchestrator ghost_game_web_monitor
 # Or the plain-text terminal table instead:
 ros2 run ghost_game_orchestrator ghost_game_monitor
 ```
-Both render `~/state`; the web monitor also consumes `/ghost/tts/text` and
+Both render `~/state`; the web monitor also consumes `/ghost/tts/caption` and
 serves its latest caption at `/api/tts`. Neither ever displays `targets` even
 if the state topic carries it (`debug_reveal_targets`) - the dashboard only
 reads `progress`.

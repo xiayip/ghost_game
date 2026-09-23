@@ -1,0 +1,12 @@
+# Plain text to synthesize. SSML and shell commands are not interpreted.
+string text
+# Cancel active and queued speech before speaking this goal.
+bool interrupt
+---
+bool success
+int32 job_id
+string message
+---
+int32 job_id
+string state
+string detail

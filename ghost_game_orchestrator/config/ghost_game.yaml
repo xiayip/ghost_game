@@ -53,6 +53,7 @@ ghost_game_node:
     tts_enabled: true
     tts_text_topic: /ghost/tts/text
     tts_stop_service: /ghost/tts/stop
+    tts_action_name: /ghost/tts/speak
     tts_setup_text: "壳层自检完成。意识端口正在接入。"
     tts_searching_text: "六枚意识碎片已经写入关节。用你的双手，找到它们。"
     tts_joint_found_texts:
