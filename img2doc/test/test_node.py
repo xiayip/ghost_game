@@ -8,6 +8,9 @@ class FakeLogger:
     def info(self, _message):
         pass
 
+    def warning(self, _message):
+        pass
+
 
 def test_auto_submit_does_not_reenter_image_lock():
     node = object.__new__(Img2DocNode)
@@ -36,3 +39,16 @@ def test_auto_submit_does_not_reenter_image_lock():
 
     assert calls == ["auto"]
     assert node._latest_image is message
+
+
+def test_nonempty_pipeline_trigger_submits_latest_cached_original():
+    node = object.__new__(Img2DocNode)
+    calls = []
+    node._start_request = (
+        lambda source: calls.append(source) or (True, "accepted"))
+    node.get_logger = lambda: FakeLogger()
+
+    node._on_trigger(SimpleNamespace(data="stable face captured"))
+    node._on_trigger(SimpleNamespace(data="   "))
+
+    assert calls == ["trigger_topic"]

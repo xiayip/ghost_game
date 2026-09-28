@@ -36,6 +36,7 @@ if [[ -z "${TARGET_HOME}" ]]; then
   echo "ERROR: unable to resolve home directory for ${TARGET_USER}" >&2
   exit 1
 fi
+TARGET_GROUP="$(id -gn "${TARGET_USER}")"
 
 run_as_target() {
   if [[ "$(id -un)" == "${TARGET_USER}" ]]; then
@@ -54,6 +55,11 @@ run_as_root() {
     sudo -n "$@"
   fi
 }
+
+# Some base-image tools run once as root and leave ~/.cache root-owned.  That
+# makes Matplotlib fall back to a temporary directory during perception startup.
+run_as_root install -d -o "${TARGET_USER}" -g "${TARGET_GROUP}" -m 755 \
+  "${TARGET_HOME}/.cache" "${TARGET_HOME}/.cache/matplotlib"
 
 missing_apt_packages=()
 for package in \

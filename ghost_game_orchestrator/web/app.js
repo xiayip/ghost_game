@@ -9,6 +9,10 @@ const CAMERA_POLL_MS = 60;
 // when the camera itself is fine - don't flip to "offline" until several
 // polls in a row have failed.
 const CAMERA_STALE_MS = 1000;
+// Presentation-only view for posters and screenshots. It expands every panel
+// and fills non-live narrative fields without calling any robot or cloud API.
+const SHOWCASE_MODE = new URLSearchParams(window.location.search).get('showcase') === '1';
+if (SHOWCASE_MODE) document.body.classList.add('showcase-mode');
 const CAMERA_VISIBLE_PHASES = new Set([
   'success_pose_reached',
   'face_searching',
@@ -365,6 +369,27 @@ function renderNarrative(state) {
 }
 
 function render(state) {
+  if (SHOWCASE_MODE) {
+    const total = Math.max(Number(state.total) || 0, 6);
+    const joints = Array.isArray(state.joints) && state.joints.length
+      ? state.joints : Array.from({ length: total }, (_, index) => `joint${index + 1}`);
+    state = {
+      ...state,
+      phase: 'done',
+      camera_ready: true,
+      joints,
+      total,
+      found_count: total,
+      locked: joints.map(() => true),
+      progress: joints.map(() => 100),
+      reconstruction: {
+        ...(state.reconstruction || {}),
+        enabled: true,
+        status: 'success',
+        request_id: 'showcase',
+      },
+    };
+  }
   renderNarrative(state);
   foundCount.innerHTML = `碎片回收 / FRAGMENTS <b>${state.found_count ?? 0}</b>/<b>${state.total ?? 0}</b>`;
 
@@ -375,7 +400,8 @@ function render(state) {
   // backend during rolling restarts.
   cameraRevealed = state.camera_ready === true ||
     (state.camera_ready == null && allFound && CAMERA_VISIBLE_PHASES.has(state.phase));
-  armLayout.classList.toggle('camera-mode-hidden', cameraRevealed);
+  armLayout.classList.toggle(
+    'camera-mode-hidden', cameraRevealed && !SHOWCASE_MODE);
   cameraPanel.classList.toggle('locked', !cameraRevealed);
 
   const reconstruction = state.reconstruction || {};
@@ -542,7 +568,24 @@ function renderCyberProfile(profile) {
 async function pollCyberProfile() {
   try {
     const res = await fetch('/api/profile', { cache: 'no-store' });
-    if (res.ok) renderCyberProfile(await res.json());
+    if (res.ok) {
+      const profile = await res.json();
+      if (SHOWCASE_MODE && String(profile.status || 'idle') === 'idle') {
+        renderCyberProfile({
+          sequence: 1,
+          status: 'success',
+          request_id: 'ghost024',
+          character_name: '镜界幽灵',
+          codename: '024',
+          character_gender: '未知',
+          role: '意识边界观察员',
+          cyberware_level: { code: 'C3', name: '战术级' },
+          introduction: '从现实触觉链路进入 Shell，在视觉重构中留下独一无二的意识镜像。',
+        });
+      } else {
+        renderCyberProfile(profile);
+      }
+    }
   } catch (err) {
     // Keep the last complete dossier visible during a brief bridge outage.
   }
@@ -582,6 +625,12 @@ async function pollCamera() {
   setTimeout(pollCamera, CAMERA_POLL_MS);
 }
 
+if (SHOWCASE_MODE) {
+  renderTts({
+    sequence: 1,
+    text: '六枚意识碎片已回收。Ghost 已苏醒，访客档案写入完成。',
+  });
+}
 poll();
 pollTts();
 pollCyberProfile();

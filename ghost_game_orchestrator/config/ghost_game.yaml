@@ -66,7 +66,9 @@ ghost_game_node:
     tts_all_found_text: "六轴同步完成。Ghost，已经苏醒。"
     tts_success_pose_text: "视觉神经接管。请看向我。正在扫描访客信号。"
     tts_face_searching_text: "目标尚未锁定。视觉阵列开始扫描。"
-    tts_face_locked_text: "人脸信号稳定。正在校准视觉轴。"
+    # Keep this empty: face lock can flap during centering and should not
+    # produce a repeated voice cue. The web state still shows this phase.
+    tts_face_locked_text: ""
     tts_face_centered_text: "视觉轴校准完成。正在潜入深网，生成访客的特工档案。"
     tts_face_not_found_text: "目标信号丢失。视觉扫描已经停止。"
     tts_dancing_text: "运动协议解除。开始执行意识重构序列。"
@@ -102,8 +104,10 @@ ghost_game_node:
     # well below the controller's 0.12 rad blocked-motion threshold and is
     # sufficient for the following camera servo to acquire the visitor.
     success_position_tolerance: [0.05, 0.08, 0.07, 0.04, 0.04, 0.04]
-    # Allow the real impedance arm to finish settling while retaining the
-    # measured-position and motion checks above.
+    # Extra settling allowance after the nominal trajectory duration. Live
+    # measured-position validation runs concurrently with the trajectory, so
+    # face detection begins as soon as the arm is inside this settled window;
+    # it does not wait for a delayed JTC action result.
     success_validation_timeout: 6.0
     success_settle_time: 0.5
     success_settle_movement: 0.01

@@ -1,8 +1,11 @@
 img2doc:
   ros__parameters:
-    # Consume the exact FLUX-styled portrait used by img2mesh so the dossier
-    # and reconstructed avatar describe the same visual identity.
-    image_topic: /ghost/reconstruction/image
+    # DeepSeek analyzes the detector's original expanded full-head crop. FLUX
+    # output remains dedicated to the stylized portrait and Tripo mesh path.
+    image_topic: /nearest_face/head_crop
+    # The reconstruction prompt is emitted once after stable face capture, so
+    # use it as a one-shot trigger instead of submitting every 30 Hz crop.
+    trigger_topic: /ghost/reconstruction/prompt
     output_topic: /ghost/profile/card
     submit_service: /ghost/profile/submit
 
@@ -22,13 +25,12 @@ img2doc:
     max_long_edge: 1300
     jpeg_quality: 90
     max_input_bytes: 20000000
-    # FLUX offers transient-local durability. Request it so img2doc also
-    # receives the latest portrait if this node is restarted mid-round.
-    input_transient_local: true
+    # The perception crop publisher is best-effort + volatile.
+    input_transient_local: false
 
-    # FLUX emits exactly one result image per game round, so process it once
-    # without requiring a second orchestrator service call.
-    auto_submit: true
+    # The crop is a continuous stream; trigger_topic performs the one request
+    # per stable capture. Keep frame-driven auto submission disabled.
+    auto_submit: false
     auto_interval_sec: 1.0
     log_each_image: false
 

@@ -11,7 +11,7 @@ This repository is split into eight ROS 2 packages with one-way ownership:
 | `ghost_tts` | Switchable offline Piper or cloud Doubao speech, bounded FIFO/cancellation, cyberpunk effects, and host PipeWire/PulseAudio playback. It does not control the arm. |
 | `flux_image_editor` | Asynchronous ROS bridge from the captured full-head crop to the FLUX HTTP image-editing service. Its prepared output feeds `img2mesh`. |
 | `img2mesh` | Uploads each prepared portrait to Tripo, tracks generation progress, and publishes the completed signed GLB URL to the Web bridge. |
-| `img2doc` | Sends each FLUX portrait to the DeepSeek vision API and publishes a validated fictional cyber dossier for the Web profile panel. |
+| `img2doc` | Sends the stable original full-head crop to the DeepSeek vision API and publishes a validated fictional cyber dossier for the Web profile panel. |
 
 The dependency direction is `ghost_game -> {ghost_game_orchestrator,
 ghost_game_perception, ghost_tts, flux_image_editor, img2mesh, img2doc,
@@ -59,7 +59,8 @@ image-to-model task, publishes JSON progress on
 `/ghost/reconstruction/mesh_status`, and sends the completed signed GLB URL
 on `/ghost/reconstruction/model_url` to the Web bridge. The robot sequence
 continues while FLUX and Tripo work asynchronously. In parallel, `img2doc`
-consumes `/ghost/reconstruction/image`, generates one structured fictional
+caches `/nearest_face/head_crop` and uses the one-shot reconstruction prompt
+to submit the latest stable original crop, generating one structured fictional
 visitor dossier, and publishes it on `/ghost/profile/card`. The Web monitor
 shows its codename, role, presentation, cyberware level, and introduction in
 the column beside the reconstructed 3D avatar.
@@ -217,13 +218,54 @@ ros2 launch zephyr_arm_bringup real_world.launch.py \
 ```
 
 **Terminal 2 - unified Ghost Game launch**:
+
+For the complete demo, export the cloud API keys first. They are only read
+from the process environment and must not be committed to the repository:
+
 ```bash
+cd /workspaces/zephyr-dev/zephyr_ws
+source /opt/ros/jazzy/setup.bash
 source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
+
+export TRIPO_API_KEY='<Tripo API key>'
+export DEEPSEEK_API_KEY='<DeepSeek API key>'
+
+ros2 launch ghost_game ghost_game.launch.py \
+  tts_backend:=piper \
+  tts_audio_device:=pulse \
+  enable_web_monitor:=true \
+  enable_face_reconstruction:=true \
+  enable_mesh_reconstruction:=true \
+  enable_cyber_profile:=true \
+  enable_gestures:=true
+```
+
+The same launch with all default arguments is simply:
+
+```bash
 ros2 launch ghost_game ghost_game.launch.py
 ```
-This starts the orchestrator, unified perception node, Piper TTS, the lightweight FLUX
-ROS bridge, and `img2mesh`. Add
-`enable_web_monitor:=true` to start the dashboard in the same launch, or
+
+Open `http://localhost:8765` for the dashboard. The standalone roadshow deck is
+available at `http://localhost:8765/roadshow.html`; use the arrow keys or Space
+to move between chapters and press `F` for fullscreen. The full launch expects the
+FLUX inference service at `http://127.0.0.1:8090`. It first reuses an already
+ready service (for example the persistent `flux2-klein-4b` Docker container).
+If none is ready, the launch starts the local inference server, automatically
+finding the current hackathon environment at
+`src/tmp/flux_image_editor/.venv` and its `.model_cache`. Override those paths
+with `FLUX_EDITOR_PYTHON` and `HF_HOME` when needed. The ROS bridge starts only
+after `/ready` succeeds, with a 900 second startup timeout.
+
+Override the endpoint with
+`face_reconstruction_server_url:=http://HOST:8090`, or append
+`enable_face_reconstruction:=false` when testing without FLUX. Tripo and the
+cyber profile can likewise be disabled with
+`enable_mesh_reconstruction:=false enable_cyber_profile:=false` when their API
+keys are unavailable.
+
+This starts the orchestrator, unified perception, Piper TTS, Web dashboard,
+the lightweight FLUX ROS bridge, `img2mesh`, and `img2doc` together. Use
 `enable_face_detection:=false` to disable YuNet while keeping the shared node,
 or `enable_perception:=false` when no camera perception is needed. Use
 `enable_tts:=false` for silent operation. The TTS launch arguments are
@@ -235,8 +277,9 @@ terminal's log during testing - it's where "stuck/blocked",
 "found joint", "gravity compensation ramping to 0", etc. get printed.
 Use `enable_face_reconstruction:=false` when the FLUX service is not needed,
 or set `face_reconstruction_server_url:=http://HOST:8090` when it runs on a
-different machine. A missing inference server reports an asynchronous
-reconstruction error and does not stop the gesture or game flow.
+different machine. When reconstruction is enabled and neither an external nor
+local service becomes ready before the timeout, the launch exits instead of
+allowing a round to lose its one-shot reconstruction request.
 Set `TRIPO_API_KEY` before launch or place an ignored
 `img2mesh/config/local_api.yaml` file locally. Use
 `enable_mesh_reconstruction:=false` to skip Tripo while testing the robot.
@@ -272,8 +315,8 @@ ros2 action send_goal /ghost/tts/speak \
   ghost_game_interfaces/action/Speak \
   "{text: '紧急链路接管。', interrupt: true}" --feedback
 
-ros2 run flux_image_editor flux_image_editor_node --ros-args \
-  --params-file $(ros2 pkg prefix flux_image_editor)/share/flux_image_editor/config/ghost_game.yaml
+ros2 launch flux_image_editor flux_image_editor.launch.py \
+  config_file:=$(ros2 pkg prefix flux_image_editor)/share/flux_image_editor/config/ghost_game.yaml
 
 ros2 topic pub --once --qos-durability transient_local \
   /ghost/perception/mode std_msgs/msg/String "{data: 'GESTURE'}"
@@ -310,6 +353,10 @@ source /workspaces/zephyr-dev/zephyr_ws/install/setup.bash
 # and subtitle panel themselves have no such dependency and keep working
 # offline, using their system-font fallbacks.
 ros2 run ghost_game_orchestrator ghost_game_web_monitor
+
+# Screenshot/showcase view: expands every stage panel without moving the arm
+# or submitting any cloud task.
+# http://localhost:8765/?showcase=1
 
 # Or the plain-text terminal table instead:
 ros2 run ghost_game_orchestrator ghost_game_monitor

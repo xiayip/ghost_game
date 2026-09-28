@@ -29,6 +29,7 @@ class Img2DocNode(Node):
         super().__init__("img2doc")
         defaults = {
             "image_topic": "/sensor_msgs/image_raw",
+            "trigger_topic": "",
             "output_topic": "/img2doc/card",
             "submit_service": "/img2doc/submit",
             "api_base_url": "https://api.deepseek.com",
@@ -75,6 +76,12 @@ class Img2DocNode(Node):
             self._on_image,
             input_qos,
         )
+        trigger_topic = str(self._values["trigger_topic"]).strip()
+        self._trigger_subscription = (
+            self.create_subscription(
+                String, trigger_topic, self._on_trigger, 10)
+            if trigger_topic else None
+        )
         self._service = self.create_service(
             Trigger, str(self._values["submit_service"]), self._on_submit
         )
@@ -104,6 +111,10 @@ class Img2DocNode(Node):
         self.get_logger().info(
             f"等待 {self._values['image_topic']} 图像；调用 {self._values['submit_service']} 提交最新帧"
         )
+        if trigger_topic:
+            self.get_logger().info(
+                f"每条非空 {trigger_topic} 消息使用最新缓存原图触发一次建档"
+            )
         self.get_logger().info(
             f"名片 JSON 发布至 {self._values['output_topic']} (std_msgs/msg/String)，模型={self._values['model']}"
         )
@@ -142,6 +153,16 @@ class Img2DocNode(Node):
         response.success = accepted
         response.message = message
         return response
+
+    def _on_trigger(self, message: String) -> None:
+        """Submit the latest cached image on a one-shot pipeline event."""
+        if not isinstance(message.data, str) or not message.data.strip():
+            return
+        accepted, reason = self._start_request("trigger_topic")
+        if not accepted:
+            self.get_logger().warning(
+                f"忽略建档触发: {reason}"
+            )
 
     def _start_request(self, source: str) -> tuple[bool, str]:
         with self._lock:

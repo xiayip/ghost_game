@@ -1,12 +1,13 @@
 # img2doc
 
-`img2doc` 是 ROS 2 Jazzy Python 功能包。Ghost 游戏配置会自动接收 FLUX 生成的风格画像，将图像和 YAML 中的固定提示词发送给 DeepSeek 视觉模型，并把结构化访客赛博资料作为 `std_msgs/msg/String` JSON 发布到 Web 面板。
+`img2doc` 是 ROS 2 Jazzy Python 功能包。Ghost 游戏配置会缓存人脸检测器发布的原始完整头部 crop，在稳定人脸捕获事件到来时，将最新原图和 YAML 中的固定提示词发送给 DeepSeek 视觉模型，并把结构化访客赛博资料作为 `std_msgs/msg/String` JSON 发布到 Web 面板。
 
 ## 工作流
 
 ```text
-/ghost/reconstruction/image (sensor_msgs/Image)
-                │ FLUX 每轮发布一次
+/nearest_face/head_crop (sensor_msgs/Image)
+                │ 缓存最新原始完整头部 crop
+                │ /ghost/reconstruction/prompt 每轮触发一次
                 ▼
        自动提交（也可调用 /ghost/profile/submit）
                 │ ROS Image → 缩放 → JPEG → Base64
@@ -17,13 +18,14 @@
  /ghost/profile/card (std_msgs/String，Transient Local)
 ```
 
-Ghost 游戏默认 `auto_submit: true`。输入并非相机视频流，而是每轮唯一的 FLUX 结果，因此一张画像只会触发一次建档。独立运行时仍可关闭自动提交并使用 Trigger 服务。
+Ghost 游戏默认 `auto_submit: false`，由每轮一次的 `/ghost/reconstruction/prompt` 触发建档，避免连续 head crop 重复请求 DeepSeek。独立运行时仍可使用 Trigger 服务。
 
 ## 接口
 
 | 方向 | 名称 | 类型 | 说明 |
 |---|---|---|---|
-| 订阅 | `/ghost/reconstruction/image` | `sensor_msgs/msg/Image` | FLUX 风格画像，Sensor Data QoS |
+| 订阅 | `/nearest_face/head_crop` | `sensor_msgs/msg/Image` | 原始完整头部 crop，Sensor Data QoS |
+| 订阅 | `/ghost/reconstruction/prompt` | `std_msgs/msg/String` | 稳定人脸捕获后的单次建档触发 |
 | 服务 | `/ghost/profile/submit` | `std_srvs/srv/Trigger` | 对最新画像手动发起一次建档 |
 | 发布 | `/ghost/profile/card` | `std_msgs/msg/String` | UTF-8 JSON，Reliable + Transient Local |
 
@@ -107,7 +109,7 @@ ros2 topic echo /ghost/profile/card std_msgs/msg/String
 ```bash
 ros2 run image_publisher image_publisher_node \
   ~/hks_ws/src/img2mesh/img/input.jpg \
-  --ros-args -r image_raw:=/ghost/reconstruction/image
+  --ros-args -r image_raw:=/nearest_face/head_crop
 ```
 
 节点收到首帧后提交一次：
@@ -126,12 +128,12 @@ ros2 service call /ghost/profile/submit std_srvs/srv/Trigger '{}'
 | `image_detail` | `original` | `low/high/original/auto` |
 | `max_long_edge` | `1300` | 发送前最长边缩放上限 |
 | `jpeg_quality` | `90` | JPEG 质量 |
-| `input_transient_local` | `true` | 重启后接收 FLUX 缓存的本轮画像 |
+| `input_transient_local` | `false` | 匹配原始 head crop 的 volatile QoS |
 | `request_timeout_sec` | `120.0` | 单次 HTTP 超时 |
 | `max_retries` | `2` | 空响应、网络错误、429 或 5xx 的重试上限 |
 | `max_tokens` | `1200` | 文本输出上限；若被截断会自动加倍重试 |
 | `temperature` | `0.2` | 降低格式与内容波动 |
-| `auto_submit` | `true` | 收到每轮 FLUX 画像后自动建档 |
+| `auto_submit` | `false` | 原图是连续流，默认改用 `trigger_topic` 单次建档 |
 | `auto_interval_sec` | `1.0` | 自动模式的重复保护间隔 |
 | `system_prompt` | 多行文本 | 固定系统提示词 |
 | `card_prompt` | 多行文本 | 固定名片字段与判断规范 |

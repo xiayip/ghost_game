@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -22,6 +23,10 @@ def generate_launch_description():
         "face_reconstruction_config")
     face_reconstruction_server_url = LaunchConfiguration(
         "face_reconstruction_server_url")
+    face_reconstruction_start_server = LaunchConfiguration(
+        "face_reconstruction_start_server")
+    face_reconstruction_ready_timeout = LaunchConfiguration(
+        "face_reconstruction_ready_timeout_sec")
     enable_mesh_reconstruction = LaunchConfiguration(
         "enable_mesh_reconstruction")
     mesh_reconstruction_config = LaunchConfiguration(
@@ -129,6 +134,19 @@ def generate_launch_description():
                 "face_reconstruction_server_url",
                 default_value="http://127.0.0.1:8090",
                 description="FLUX HTTP endpoint (local or SSH-forwarded)",
+            ),
+            DeclareLaunchArgument(
+                "face_reconstruction_start_server",
+                default_value="true",
+                description=(
+                    "Start FLUX locally when the configured localhost endpoint "
+                    "is not already ready"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "face_reconstruction_ready_timeout_sec",
+                default_value="900",
+                description="Maximum wait for the FLUX service to become ready",
             ),
             DeclareLaunchArgument(
                 "enable_mesh_reconstruction",
@@ -305,19 +323,21 @@ def generate_launch_description():
                 ],
                 condition=IfCondition(enable_gesture_router),
             ),
-            Node(
-                package="flux_image_editor",
-                executable="flux_image_editor_node",
-                name="flux_image_editor",
-                output="screen",
-                parameters=[
-                    face_reconstruction_config,
-                    {
-                        "server_url": ParameterValue(
-                            face_reconstruction_server_url, value_type=str
-                        ),
-                    },
-                ],
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution([
+                        FindPackageShare("flux_image_editor"),
+                        "launch",
+                        "flux_image_editor.launch.py",
+                    ])
+                ),
+                launch_arguments={
+                    "config_file": face_reconstruction_config,
+                    "server_url": face_reconstruction_server_url,
+                    "start_server": face_reconstruction_start_server,
+                    "wait_for_server": "true",
+                    "ready_timeout_sec": face_reconstruction_ready_timeout,
+                }.items(),
                 condition=IfCondition(enable_face_reconstruction),
             ),
             Node(

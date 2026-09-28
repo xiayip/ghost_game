@@ -1262,8 +1262,8 @@ header {
 .cyber-profile-brief p {
   margin: 0;
   font-family: var(--font-cyber-cn);
-  font-size: 13px;
-  line-height: 1.8;
+  font-size: 19px;
+  line-height: 1.65;
   letter-spacing: 0.055em;
   color: var(--fg-secondary);
 }
@@ -1435,7 +1435,7 @@ header {
   .mesh-body { --profile-width: clamp(260px, 36%, 310px); }
   .cyber-profile { padding: 20px 17px 16px; }
   .cyber-profile-id { padding: 17px 0 14px; }
-  .cyber-profile-brief p { font-size: 12px; line-height: 1.65; }
+  .cyber-profile-brief p { font-size: 17px; line-height: 1.6; }
 }
 
 @media (max-width: 600px) {
@@ -1511,7 +1511,7 @@ header {
   .cyber-profile-facts { position: absolute; top: 74px; right: 18px; width: 46%; }
   .cyber-level-meter { position: absolute; top: 128px; right: 18px; width: 46%; }
   .cyber-profile-brief { max-width: 52%; }
-  .cyber-profile-brief p { font-size: 11px; line-height: 1.55; }
+  .cyber-profile-brief p { font-size: 15px; line-height: 1.5; }
   .cyber-profile-source { padding-top: 8px; }
   .cyber-profile-source span { display: none; }
 }

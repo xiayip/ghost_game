@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const INFO_POLL_MS = 500;
+const SHOWCASE_MODE = new URLSearchParams(window.location.search).get('showcase') === '1';
 
 function installFineWheelZoom(controls, camera, element) {
   const sensitivity = 0.00012;
@@ -389,8 +390,8 @@ function initMeshViewer() {
       const info = await response.json();
       const version = Number(info.version) || 0;
       const pipelineHandled = renderGeneration(info);
-      const liveModelReady = !pipelineHandled &&
-        info.source === 'published_url' && info.model_url;
+      const liveModelReady = !pipelineHandled && info.model_url &&
+        (info.source === 'published_url' || SHOWCASE_MODE);
 
       if (liveModelReady && version !== loadedVersion &&
           version !== loadingVersion && version !== failedVersion) {

@@ -508,7 +508,7 @@ class GhostGameNode(Node):
         self.declare_parameter(
             'tts_face_searching_text', '目标尚未锁定。视觉阵列开始扫描。')
         self.declare_parameter(
-            'tts_face_locked_text', '人脸信号稳定。正在校准视觉轴。')
+            'tts_face_locked_text', '')
         self.declare_parameter(
             'tts_face_centered_text',
             '视觉轴校准完成。正在潜入深网，生成访客的特工档案。')
@@ -553,9 +553,9 @@ class GhostGameNode(Node):
         # limits remain tighter than the game's match tolerance.
         self.declare_parameter(
             'success_position_tolerance', [0.05, 0.08, 0.07, 0.04, 0.04, 0.04])
-        # The real impedance arm can continue converging for several seconds
-        # after the JTC action completes. Keep the tight position tolerances,
-        # but allow that physical settling instead of reporting a false abort.
+        # Extra settling allowance after the nominal trajectory duration.
+        # Measured-pose validation runs while the JTC goal is active, avoiding
+        # any wait for a delayed action result once the arm is already stable.
         self.declare_parameter('success_validation_timeout', 6.0)
         self.declare_parameter('success_settle_time', 0.5)
         self.declare_parameter('success_settle_movement', 0.01)
@@ -1697,17 +1697,21 @@ class GhostGameNode(Node):
         if any(position is None for position in start_positions):
             self.get_logger().error('Lost /joint_states before success move')
             return False
-        action_succeeded = self._send_trajectory(
+        # Do not block on the JTC result here. The real impedance JTC can
+        # reach the commanded pose but leave its action result pending until
+        # the generic max_t + 5 s timeout. Validate live joint positions while
+        # the trajectory runs and advance as soon as the arm is truly settled.
+        trajectory_accepted = self._send_trajectory(
             self._impedance_traj_client,
             [start_positions, self.success_positions],
             [self.success_seed_time, self.success_time_from_start],
-            wait_result=True,
+            wait_result=False,
             velocities=[zero_motion, self.success_velocities],
             accelerations=[zero_motion, self.success_accelerations])
-        if not action_succeeded:
-            self.get_logger().warn(
-                'Success-pose trajectory action did not report success; '
-                'checking the measured settled pose before aborting')
+        if not trajectory_accepted:
+            self.get_logger().error(
+                'Failed to submit success-pose trajectory')
+            return False
 
         # Do not reveal the camera merely because trajectory time elapsed.
         # Require every measured joint to be close to the intended success
@@ -1717,7 +1721,13 @@ class GhostGameNode(Node):
         return self._wait_for_success_pose_settled()
 
     def _wait_for_success_pose_settled(self):
-        deadline = time.monotonic() + self.success_validation_timeout
+        started_at = time.monotonic()
+        # Validation now runs concurrently with the commanded motion. Keep
+        # success_validation_timeout as the extra settling allowance after
+        # the nominal trajectory duration.
+        deadline = (
+            started_at + self.success_time_from_start +
+            self.success_validation_timeout)
         settled_since = None
         settled_reference = None
         last_positions = self._positions_snapshot()
@@ -1749,7 +1759,8 @@ class GhostGameNode(Node):
                     elif now - settled_since >= self.success_settle_time:
                         self.get_logger().info(
                             'Success pose independently verified from measured '
-                            f'joint positions; errors={errors}')
+                            'joint positions; '
+                            f'elapsed={now - started_at:.2f} s, errors={errors}')
                         return True
                 else:
                     settled_since = None
@@ -1987,6 +1998,7 @@ class GhostGameNode(Node):
         )
         started_at = time.monotonic()
         scan_index = 0
+        face_locked_announced = False
         self._clear_face_sample()
         self._speak(self.tts_face_searching_text)
 
@@ -2046,7 +2058,12 @@ class GhostGameNode(Node):
                             f'area_ratio={sample.area_ratio:.4f}, '
                             f'error_x={sample.error_x:.3f}, '
                             f'error_y={sample.error_y:.3f}')
-                        self._speak(self.tts_face_locked_text)
+                        # A noisy detector can repeatedly move between stable
+                        # and lost while centering. Never enqueue the same
+                        # transition cue for every reacquisition.
+                        if not face_locked_announced:
+                            self._speak(self.tts_face_locked_text)
+                            face_locked_announced = True
                         center_result = self._center_face(reference, sample)
                         if center_result == 'centered':
                             with self._state_lock:
@@ -2305,7 +2322,10 @@ class GhostGameNode(Node):
                 'mesh_status': 'idle',
                 'mesh_progress': 0,
             }
-        self._speak(self.tts_gesture_interaction_text)
+        # Palm interaction is a hard narrative boundary. Clear any queued
+        # face-search/centering cues before announcing it, otherwise stale
+        # visual-axis messages can keep playing well into gesture control.
+        self._interrupt_speech(self.tts_gesture_interaction_text)
         self.get_logger().info(
             'Palm push/pull interaction active: open_palm + aligned depth, '
             f'travel=+/-{self.gesture_max_offset:.3f} m, '
@@ -2858,7 +2878,6 @@ class GhostGameNode(Node):
                         'Palm interaction motion failed')
                     self._safe_abort()
                     return
-
         if not self.enable_dance:
             with self._state_lock:
                 self._phase = 'done'

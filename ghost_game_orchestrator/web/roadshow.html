@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b10">
+  <meta name="description" content="Ghost Game 机械臂人机共生互动装置路演介绍">
+  <title>Ghost Game // 人机共生协议</title>
+  <style>
+    :root {
+      --ink: #e8f2f5;
+      --muted: #7f909b;
+      --dim: #44515b;
+      --void: #05080c;
+      --shell: #091016;
+      --panel: rgba(12, 22, 29, .84);
+      --line: rgba(96, 231, 255, .15);
+      --line-hot: rgba(96, 231, 255, .48);
+      --cyan: #60e7ff;
+      --cyan-2: #00b8dc;
+      --green: #28f3a3;
+      --amber: #ffd166;
+      --red: #ff5370;
+      --blue: #7699ff;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      --display: "Arial Narrow", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --ease: cubic-bezier(.16, 1, .3, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-snap-type: y mandatory; background: var(--void); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 8%, rgba(0, 184, 220, .09), transparent 30%),
+        radial-gradient(circle at 91% 86%, rgba(40, 243, 163, .045), transparent 26%),
+        var(--void);
+      font-family: var(--sans);
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      opacity: .34;
+      background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.012) 3px 4px);
+      mix-blend-mode: screen;
+    }
+    a { color: inherit; }
+    button { font: inherit; }
+    ::selection { color: #001319; background: var(--cyan); }
+
+    .deck-progress {
+      position: fixed;
+      z-index: 40;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+      box-shadow: 0 0 14px rgba(96, 231, 255, .8);
+      transition: width .35s var(--ease);
+    }
+    .topbar {
+      position: fixed;
+      z-index: 30;
+      top: 0;
+      right: 0;
+      left: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 54px;
+      padding: 0 clamp(18px, 3vw, 48px);
+      border-bottom: 1px solid rgba(96, 231, 255, .11);
+      background: rgba(5, 8, 12, .78);
+      backdrop-filter: blur(14px);
+    }
+    .brand,
+    .deck-counter,
+    .eyebrow,
+    .micro,
+    .chip,
+    .metric-label,
+    .node-code,
+    .section-index,
+    .footnote { font-family: var(--mono); text-transform: uppercase; letter-spacing: .13em; }
+    .brand { display: flex; align-items: center; gap: 11px; font-size: 10px; color: var(--cyan); }
+    .brand-mark { position: relative; width: 18px; height: 18px; border: 1px solid var(--cyan); transform: rotate(45deg); }
+    .brand-mark::after { content: ""; position: absolute; inset: 4px; border: 1px solid var(--green); }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .deck-counter { min-width: 72px; color: var(--muted); font-size: 10px; }
+    .deck-counter b { color: var(--ink); font-weight: 500; }
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border: 1px solid var(--line);
+      background: rgba(96, 231, 255, .035);
+      color: var(--muted);
+      cursor: pointer;
+      transition: color .2s, border-color .2s, background .2s;
+    }
+    .icon-button:hover { color: var(--cyan); border-color: var(--line-hot); background: rgba(96,231,255,.08); }
+    .icon-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+    .rail {
+      position: fixed;
+      z-index: 30;
+      top: 50%;
+      left: clamp(10px, 1.4vw, 24px);
+      display: grid;
+      gap: 8px;
+      transform: translateY(-50%);
+    }
+    .rail a {
+      position: relative;
+      display: block;
+      width: 16px;
+      height: 8px;
+      text-decoration: none;
+    }
+    .rail a::before {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 0;
+      width: 8px;
+      height: 1px;
+      background: var(--dim);
+      transition: width .25s var(--ease), background .25s, box-shadow .25s;
+    }
+    .rail a.active::before { width: 16px; background: var(--cyan); box-shadow: 0 0 7px rgba(96,231,255,.7); }
+
+    .slide {
+      position: relative;
+      min-height: 100svh;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      display: grid;
+      align-items: center;
+      padding: 82px clamp(28px, 6.5vw, 112px) 50px;
+      isolation: isolate;
+      overflow: hidden;
+    }
+    .slide::before {
+      content: "";
+      position: absolute;
+      z-index: -2;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(96,231,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(96,231,255,.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, transparent 4%, black 27%, black 80%, transparent 98%);
+    }
+    .slide::after {
+      content: attr(data-watermark);
+      position: absolute;
+      z-index: -1;
+      right: -1vw;
+      bottom: -3vw;
+      color: transparent;
+      -webkit-text-stroke: 1px rgba(96,231,255,.045);
+      font: 800 clamp(90px, 18vw, 260px)/.72 var(--display);
+      letter-spacing: -.06em;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .slide-inner { width: min(1420px, 100%); margin: 0 auto; }
+    .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; margin-bottom: clamp(24px, 3vw, 46px); }
+    .section-index { color: var(--cyan); font-size: 10px; }
+    .section-index::before { content: "[ "; color: var(--dim); }
+    .section-index::after { content: " ]"; color: var(--dim); }
+    .eyebrow { margin-bottom: 12px; color: var(--cyan); font-size: 10px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1, h2, h3 { font-family: var(--display); }
+    h1 { max-width: 1040px; margin-bottom: 24px; font-size: clamp(52px, 8vw, 126px); line-height: .94; letter-spacing: -.055em; font-weight: 800; }
+    h1 em { display: block; color: var(--cyan); font-style: normal; text-shadow: 0 0 38px rgba(96,231,255,.16); }
+    h2 { margin-bottom: 0; font-size: clamp(34px, 4.4vw, 70px); line-height: 1.02; letter-spacing: -.035em; font-weight: 720; }
+    h2 span { color: var(--cyan); }
+    h3 { font-size: 20px; line-height: 1.25; letter-spacing: -.015em; }
+    .lede { max-width: 900px; color: #b9c8ce; font-size: clamp(17px, 1.7vw, 24px); line-height: 1.68; }
+    .lede strong { color: var(--ink); font-weight: 600; }
+    .micro { color: var(--muted); font-size: 9px; line-height: 1.65; }
+    .accent { color: var(--cyan); }
+    .success { color: var(--green); }
+    .warning { color: var(--amber); }
+    .danger { color: var(--red); }
+
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: clamp(38px, 7vw, 120px); align-items: end; }
+    .hero-copy { padding-top: 4vh; }
+    .hero-line { width: 90px; height: 2px; margin: 28px 0; background: linear-gradient(90deg, var(--cyan), transparent); }
+    .hero-aside { position: relative; padding: 28px; border: 1px solid var(--line); background: linear-gradient(145deg, rgba(96,231,255,.07), rgba(6,12,16,.78) 42%); }
+    .hero-aside::before, .panel::before, .story-card::before, .law-card::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: -1px;
+      width: 28px;
+      height: 12px;
+      border-top: 1px solid var(--cyan);
+      border-left: 1px solid var(--cyan);
+    }
+    .terminal-lines { display: grid; gap: 12px; margin-top: 24px; font: 11px/1.55 var(--mono); color: var(--muted); }
+    .terminal-lines span::before { content: "> "; color: var(--green); }
+    .hero-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: clamp(40px, 8vh, 100px); background: var(--line); border: 1px solid var(--line); }
+    .metric { min-height: 92px; padding: 19px; background: rgba(5,8,12,.92); }
+    .metric b { display: block; margin-bottom: 7px; color: var(--ink); font: 600 clamp(24px, 2.4vw, 40px)/1 var(--mono); }
+    .metric-label { color: var(--muted); font-size: 8px; }
+
+    .story-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; counter-reset: story; }
+    .story-card {
+      position: relative;
+      min-height: 390px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(96,231,255,.055), rgba(9,16,22,.78) 33%);
+      counter-increment: story;
+      transition: transform .35s var(--ease), border-color .35s, background .35s;
+    }
+    .story-card:hover { transform: translateY(-7px); border-color: var(--line-hot); background: linear-gradient(180deg, rgba(96,231,255,.11), rgba(9,16,22,.9) 38%); }
+    .story-no { color: var(--cyan); font: 10px var(--mono); letter-spacing: .14em; }
+    .story-no::after { content: "0" counter(story); }
+    .story-card h3 { margin: 48px 0 14px; font-size: clamp(25px, 2.5vw, 36px); }
+    .story-card h3 span { display: block; margin-top: 7px; color: var(--cyan); font: 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .story-card p { color: #9dafb7; font-size: 15px; line-height: 1.8; }
+    .story-signal { position: absolute; right: 25px; bottom: 24px; left: 25px; display: flex; align-items: center; gap: 8px; color: var(--muted); font: 9px var(--mono); letter-spacing: .08em; }
+    .story-signal i { flex: 1; height: 1px; background: linear-gradient(90deg, var(--cyan), transparent); }
+
+    .experience-layout { display: grid; grid-template-columns: .76fr 1.24fr; gap: clamp(32px, 6vw, 90px); align-items: center; }
+    .quote-block { padding: 24px 0 24px 28px; border-left: 2px solid var(--cyan); color: #c5d2d7; font-size: clamp(20px, 2.1vw, 30px); line-height: 1.55; }
+    .fragment-rack { display: grid; gap: 12px; }
+    .fragment-row { display: grid; grid-template-columns: 54px 1fr 116px; align-items: center; gap: 14px; padding: 15px 17px; border: 1px solid var(--line); background: rgba(9,16,22,.72); }
+    .fragment-row b { font: 13px var(--mono); color: var(--cyan); }
+    .fragment-track { position: relative; height: 4px; overflow: hidden; background: rgba(255,255,255,.07); }
+    .fragment-track i { display: block; width: var(--level); height: 100%; background: linear-gradient(90deg, var(--cyan-2), var(--green)); box-shadow: 0 0 12px rgba(40,243,163,.38); }
+    .fragment-state { text-align: right; color: var(--muted); font: 9px var(--mono); letter-spacing: .09em; }
+    .fragment-row.locked { border-color: rgba(40,243,163,.28); }
+    .fragment-row.locked .fragment-state { color: var(--green); }
+    .state-strip { display: flex; align-items: center; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+    .chip { padding: 8px 10px; border: 1px solid var(--line); color: var(--muted); font-size: 8px; }
+    .chip.hot { color: var(--green); border-color: rgba(40,243,163,.32); background: rgba(40,243,163,.045); }
+    .state-arrow { color: var(--dim); }
+
+    .live-layout { display: grid; grid-template-columns: minmax(260px,.54fr) minmax(0,1.46fr); gap: clamp(38px,6vw,92px); align-items: center; }
+    .live-screen {
+      position: relative;
+      justify-self: center;
+      height: min(68svh, 650px);
+      aspect-ratio: 998 / 1801;
+      overflow: hidden;
+      border: 1px solid rgba(96,231,255,.48);
+      background: #0c1117;
+      box-shadow: 0 0 0 7px rgba(7,13,18,.86), 0 0 0 8px rgba(96,231,255,.12), 0 28px 80px rgba(0,0,0,.52);
+      color: inherit;
+      text-decoration: none;
+    }
+    .live-screen::before, .live-screen::after { content: ""; position: absolute; z-index: 2; pointer-events: none; }
+    .live-screen::before { inset: 0; background: linear-gradient(90deg, rgba(96,231,255,.1), transparent 8%, transparent 92%, rgba(96,231,255,.06)); box-shadow: inset 0 0 34px rgba(0,0,0,.36); }
+    .live-screen::after { top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 9px var(--green); }
+    .live-screen img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .live-screen-label { position: absolute; z-index: 3; right: 10px; bottom: 9px; padding: 6px 8px; border: 1px solid rgba(96,231,255,.22); background: rgba(5,8,12,.86); color: var(--cyan); font: 7px var(--mono); letter-spacing: .1em; }
+    .live-copy .lede { max-width: 780px; margin: 22px 0 25px; font-size: clamp(15px,1.45vw,20px); }
+    .live-status { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .live-status span { padding: 8px 10px; border: 1px solid rgba(40,243,163,.2); background: rgba(40,243,163,.035); color: #78c2a5; font: 8px var(--mono); letter-spacing: .08em; }
+    .live-map { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; counter-reset: live-zone; }
+    .live-zone { position: relative; min-height: 162px; padding: 20px; border: 1px solid var(--line); background: rgba(9,16,22,.8); counter-increment: live-zone; }
+    .live-zone::before { content: "0" counter(live-zone); display: block; margin-bottom: 28px; color: var(--cyan); font: 9px var(--mono); }
+    .live-zone h3 { margin-bottom: 9px; font-size: 18px; }
+    .live-zone p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .live-flow { display: flex; align-items: center; gap: 12px; margin-top: 15px; color: var(--muted); font: 8px var(--mono); letter-spacing: .08em; }
+    .live-flow i { flex: 1; height: 1px; background: linear-gradient(90deg, var(--cyan), var(--green)); opacity: .55; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 36px 1.08fr 36px 1fr 36px .86fr;
+      align-items: stretch;
+      gap: 0;
+    }
+    .arch-column { display: grid; gap: 11px; align-content: center; }
+    .arch-title { margin-bottom: 5px; color: var(--muted); font: 9px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .arch-node { position: relative; padding: 17px; border: 1px solid var(--line); background: var(--panel); }
+    .arch-node.primary { border-color: rgba(96,231,255,.42); background: linear-gradient(135deg, rgba(96,231,255,.1), rgba(9,16,22,.86)); }
+    .arch-node.cloud { border-style: dashed; }
+    .arch-node strong { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 600; }
+    .node-code { color: var(--muted); font-size: 7px; line-height: 1.5; }
+    .arch-arrow { display: grid; place-items: center; color: var(--cyan); font: 18px var(--mono); opacity: .65; }
+    .bus { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; margin-top: 20px; padding: 12px 18px; border: 1px solid rgba(118,153,255,.22); background: rgba(118,153,255,.04); color: #9eb2ff; font: 9px var(--mono); letter-spacing: .09em; }
+    .bus i { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(118,153,255,.1), rgba(118,153,255,.7), rgba(118,153,255,.1)); }
+
+    .mit-layout { display: grid; grid-template-columns: minmax(290px,.72fr) minmax(560px,1.28fr); gap: clamp(30px,5vw,72px); align-items: center; }
+    .formula { margin: 26px 0; padding: 22px 20px; border: 1px solid var(--line-hot); background: rgba(96,231,255,.055); font: clamp(17px,1.75vw,26px)/1.5 var(--mono); color: var(--cyan); white-space: nowrap; }
+    .formula small { display: block; margin-top: 10px; color: var(--muted); font-size: 9px; letter-spacing: .08em; white-space: normal; }
+    .mode-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+    .mode-button { padding: 9px 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); font: 9px var(--mono); cursor: pointer; }
+    .mode-button.active { color: var(--cyan); border-color: var(--line-hot); background: rgba(96,231,255,.08); }
+    .control-stack { display: grid; gap: 12px; }
+    .stack-layer { position: relative; display: grid; grid-template-columns: 112px 1fr; min-height: 92px; border: 1px solid var(--line); background: rgba(9,16,22,.84); transition: opacity .25s, border-color .25s, transform .25s; }
+    .stack-label { display: grid; place-items: center; padding: 14px; border-right: 1px solid var(--line); color: var(--cyan); font: 9px/1.5 var(--mono); letter-spacing: .1em; text-align: center; }
+    .stack-content { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; align-items: center; padding: 12px; }
+    .stack-box { min-height: 58px; padding: 11px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.018); }
+    .stack-box b { display: block; margin-bottom: 4px; font: 10px var(--mono); color: #c9d6da; }
+    .stack-box small { color: var(--muted); font: 8px/1.55 var(--mono); }
+    .stack-layer.output { border-color: rgba(40,243,163,.34); }
+    .stack-layer.output .stack-label { color: var(--green); border-color: rgba(40,243,163,.2); }
+    .stack-layer.hardware { min-height: 70px; border-color: rgba(255,209,102,.24); }
+    .stack-layer.hardware .stack-label { color: var(--amber); }
+    .control-stack[data-mode="free"] [data-path]:not([data-path~="free"]),
+    .control-stack[data-mode="locked"] [data-path]:not([data-path~="locked"]),
+    .control-stack[data-mode="trajectory"] [data-path]:not([data-path~="trajectory"]) { opacity: .26; }
+    .control-stack [data-path] { transition: opacity .25s, border-color .25s, background .25s; }
+    .control-stack[data-mode="free"] [data-path~="free"],
+    .control-stack[data-mode="locked"] [data-path~="locked"],
+    .control-stack[data-mode="trajectory"] [data-path~="trajectory"] { border-color: rgba(96,231,255,.42); background: rgba(96,231,255,.075); }
+    .safety-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 18px; }
+    .safety-tags span { padding: 7px 9px; border: 1px solid rgba(40,243,163,.18); color: #86bca8; font: 8px var(--mono); }
+
+    .perception-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .panel { position: relative; padding: clamp(22px,2.4vw,34px); border: 1px solid var(--line); background: var(--panel); }
+    .panel h3 { margin-bottom: 12px; font-size: 24px; }
+    .panel p { color: #9eafb6; line-height: 1.75; font-size: 14px; }
+    .signal-row { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 12px; margin-top: 14px; color: var(--muted); font: 8px var(--mono); }
+    .signal-row i { height: 3px; overflow: hidden; background: rgba(255,255,255,.06); }
+    .signal-row i::after { content: ""; display: block; width: var(--signal); height: 100%; background: var(--cyan); box-shadow: 0 0 9px rgba(96,231,255,.5); }
+    .spec-list { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 19px; }
+    .spec { padding: 11px; border: 1px solid rgba(255,255,255,.07); }
+    .spec b { display: block; margin-bottom: 5px; color: var(--cyan); font: 15px var(--mono); }
+    .spec small { color: var(--muted); font: 7px/1.45 var(--mono); letter-spacing: .08em; }
+
+    .pipeline { display: grid; grid-template-columns: .8fr 36px 1fr 36px 1fr 36px .9fr; align-items: center; }
+    .pipe-node { min-height: 150px; padding: 22px; border: 1px solid var(--line); background: var(--panel); }
+    .pipe-node.source { border-color: rgba(96,231,255,.38); }
+    .pipe-node.result { border-color: rgba(40,243,163,.3); }
+    .pipe-node b { display: block; margin: 8px 0 10px; font-size: 17px; }
+    .pipe-node p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .pipe-split { display: grid; gap: 10px; }
+    .pipe-arrow { text-align: center; color: var(--cyan); font: 20px var(--mono); opacity: .65; }
+    .latency-mask { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; margin-top: 24px; padding: 15px 18px; border: 1px solid rgba(255,209,102,.2); background: rgba(255,209,102,.035); color: #c4b384; font: 9px var(--mono); letter-spacing: .08em; }
+    .latency-mask i { height: 1px; background: repeating-linear-gradient(90deg, var(--amber) 0 5px, transparent 5px 10px); }
+
+    .safety-layout { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .safety-column { padding: 28px; border: 1px solid var(--line); background: var(--panel); }
+    .safety-column.passive { border-color: rgba(40,243,163,.25); }
+    .safety-column.active { border-color: rgba(96,231,255,.3); }
+    .safety-column h3 span { display: block; margin-bottom: 7px; font: 8px var(--mono); color: var(--muted); letter-spacing: .12em; }
+    .check-list { display: grid; gap: 12px; margin: 22px 0 0; padding: 0; list-style: none; }
+    .check-list li { position: relative; padding: 0 0 0 20px; color: #a8b8be; font-size: 14px; line-height: 1.55; }
+    .check-list li::before { content: "+"; position: absolute; left: 0; color: var(--green); font: 12px var(--mono); }
+    .law-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .law-card { position: relative; min-height: 160px; padding: 20px; border: 1px solid rgba(255,255,255,.09); background: rgba(5,8,12,.66); }
+    .law-card b { display: block; margin-bottom: 12px; color: var(--amber); font: 12px var(--mono); }
+    .law-card p { margin: 0; color: #9eafb6; font-size: 13px; line-height: 1.65; }
+    .law-card small { display: block; margin-top: 12px; color: var(--cyan); font: 8px/1.5 var(--mono); }
+
+    .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .market-card { min-height: 255px; padding: 26px; border: 1px solid var(--line); background: linear-gradient(150deg, rgba(96,231,255,.055), rgba(9,16,22,.78) 36%); }
+    .market-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 36px; border: 1px solid var(--line-hot); color: var(--cyan); font: 14px var(--mono); }
+    .market-card h3 { margin-bottom: 12px; font-size: 23px; }
+    .market-card p { color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .market-foot { margin-top: 10px; color: var(--green); font: 8px var(--mono); letter-spacing: .08em; }
+
+    .final-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: clamp(42px,8vw,130px); align-items: center; }
+    .manifesto { max-width: 920px; font-size: clamp(27px,3.6vw,55px); line-height: 1.28; letter-spacing: -.03em; font-weight: 650; }
+    .manifesto span { color: var(--cyan); }
+    .repo-card { position: relative; padding: 28px; border: 1px solid var(--line-hot); background: linear-gradient(145deg, rgba(96,231,255,.1), rgba(5,8,12,.86) 42%); }
+    .repo-url { display: block; margin: 22px 0; overflow-wrap: anywhere; color: var(--cyan); font: 13px/1.6 var(--mono); }
+    .repo-actions { display: flex; gap: 9px; }
+    .repo-button { padding: 10px 13px; border: 1px solid var(--line-hot); background: rgba(96,231,255,.07); color: var(--ink); font: 9px var(--mono); text-decoration: none; cursor: pointer; }
+    .repo-button:hover { background: rgba(96,231,255,.14); }
+    .open-list { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; margin-top: 20px; }
+    .open-list span { padding: 8px; border: 1px solid rgba(255,255,255,.07); color: var(--muted); font: 7px var(--mono); }
+    .final-note { margin-top: 36px; color: var(--muted); font: 9px/1.6 var(--mono); letter-spacing: .08em; }
+
+    .presenter-hint { position: fixed; z-index: 30; right: 22px; bottom: 16px; color: #394750; font: 8px var(--mono); letter-spacing: .08em; }
+    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+    .slide.in-view .reveal { opacity: 1; transform: translateY(0); }
+    .slide.in-view .reveal:nth-child(2) { transition-delay: .08s; }
+    .slide.in-view .reveal:nth-child(3) { transition-delay: .16s; }
+
+    @media (max-width: 980px) {
+      html { scroll-snap-type: none; }
+      .slide { min-height: auto; padding-top: 88px; padding-bottom: 70px; }
+      .hero-grid, .experience-layout, .live-layout, .mit-layout, .final-grid { grid-template-columns: 1fr; }
+      .story-grid, .market-grid, .law-grid { grid-template-columns: 1fr; }
+      .story-card { min-height: 300px; }
+      .live-screen { width: min(72vw, 430px); height: auto; aspect-ratio: 998 / 1801; }
+      .live-map { grid-template-columns: 1fr; }
+      .architecture, .pipeline { grid-template-columns: 1fr; gap: 10px; }
+      .arch-arrow, .pipe-arrow { transform: rotate(90deg); height: 28px; }
+      .bus { grid-column: 1; }
+      .perception-grid, .safety-layout { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .hero-metrics { grid-template-columns: repeat(2,1fr); }
+    }
+    @media (max-width: 600px) {
+      .topbar { padding: 0 14px; }
+      .brand span:last-child, .presenter-hint { display: none; }
+      .slide { padding-right: 18px; padding-left: 18px; }
+      h1 { font-size: 48px; }
+      .hero-metrics { grid-template-columns: 1fr 1fr; }
+      .metric { min-height: 80px; padding: 14px; }
+      .fragment-row { grid-template-columns: 42px 1fr; }
+      .fragment-state { grid-column: 2; text-align: left; }
+      .stack-layer { grid-template-columns: 1fr; }
+      .stack-label { border-right: 0; border-bottom: 1px solid var(--line); }
+      .stack-content { grid-template-columns: 1fr; }
+      .spec-list, .open-list { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      .reveal { opacity: 1; transform: none; }
+    }
+    @media print {
+      @page { size: 16in 9in; margin: 0; }
+      html { scroll-snap-type: none; }
+      body { background: var(--void); print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .topbar, .rail, .presenter-hint, .deck-progress { display: none !important; }
+      .slide { min-height: 9in; height: 9in; page-break-after: always; padding: .55in .75in; }
+      .reveal { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck-progress" id="deck-progress"></div>
+  <header class="topbar">
+    <div class="brand"><i class="brand-mark" aria-hidden="true"></i><span>GHOST / HUMAN–ROBOT SYMBIOSIS PROTOCOL</span></div>
+    <div class="top-actions">
+      <span class="deck-counter"><b id="current-slide">01</b> / <span id="total-slides">11</span></span>
+      <button class="icon-button" id="prev-slide" aria-label="上一页" title="上一页">
+        <svg viewBox="0 0 20 20"><path d="M15 12.5 10 7.5l-5 5"/></svg>
+      </button>
+      <button class="icon-button" id="next-slide" aria-label="下一页" title="下一页">
+        <svg viewBox="0 0 20 20"><path d="m5 7.5 5 5 5-5"/></svg>
+      </button>
+      <button class="icon-button" id="fullscreen" aria-label="全屏" title="全屏演示">
+        <svg viewBox="0 0 20 20"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5"/></svg>
+      </button>
+    </div>
+  </header>
+  <nav class="rail" id="rail" aria-label="演示章节"></nav>
+
+  <main>
+    <section class="slide" id="cover" data-watermark="GHOST" aria-label="封面">
+      <div class="slide-inner">
+        <div class="hero-grid">
+          <div class="hero-copy reveal">
+            <div class="eyebrow">// FIND THE GHOST // 寻找灵魂协议</div>
+            <h1>Ghost<br><em>in the Arm.</em></h1>
+            <div class="hero-line"></div>
+            <p class="lede">一场从<strong>触觉、凝视到数字分身</strong>的机械臂互动叙事。<br>
+              我们不只让机器完成任务，而是让人类安全地走进它的感知与控制回路。</p>
+          </div>
+          <aside class="hero-aside reveal">
+            <div class="micro">LIVE SYSTEM BRIEF // 2026.09</div>
+            <h3 style="margin:18px 0 8px;font-size:28px">人机共生的安全交互原型</h3>
+            <p style="color:var(--muted);line-height:1.7;font-size:14px">Rebot Arm RS × Orbbec 305 × NVIDIA DGX Spark<br>ROS 2 Jazzy / MIT Control / Vision AI / Generative AI</p>
+            <div class="terminal-lines">
+              <span>shell online</span>
+              <span>ghost fragments: 6</span>
+              <span>human contact: authorized</span>
+              <span>safety envelope: active</span>
+            </div>
+          </aside>
+        </div>
+        <div class="hero-metrics reveal">
+          <div class="metric"><b>6</b><span class="metric-label">JOINT GHOST FRAGMENTS</span></div>
+          <div class="metric"><b>30/60/80</b><span class="metric-label">VISION / FACE / PALM HZ</span></div>
+          <div class="metric"><b>8</b><span class="metric-label">ROS 2 PACKAGES</span></div>
+          <div class="metric"><b>4D3N</b><span class="metric-label">HACKATHON BUILD</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="story" data-watermark="STORY" aria-label="故事三幕">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// NARRATIVE FIRST</div><h2>一台机械臂，<br><span>三次关系变化。</span></h2></div>
+          <span class="section-index">01 / STORY ARC</span>
+        </div>
+        <div class="story-grid reveal">
+          <article class="story-card">
+            <span class="story-no"></span>
+            <h3>寻找 Ghost <span>FIND THE GHOST</span></h3>
+            <p>机械臂陷入沉睡。观众用手扮动六个关节，寻找隐藏的角度。每找到一枚意识碎片，那个关节便从柔软变得坚定。</p>
+            <div class="story-signal"><span>TOUCH → TRUST</span><i></i><span>01</span></div>
+          </article>
+          <article class="story-card">
+            <span class="story-no"></span>
+            <h3>Ghost 苏醒 <span>THE OPTICAL NERVE</span></h3>
+            <p>六枚碎片归位，视觉神经接管。末端相机寻找面孔、对准凝视，绕行打量，仿佛机器第一次意识到“你”。</p>
+            <div class="story-signal"><span>GAZE → RECOGNITION</span><i></i><span>02</span></div>
+          </article>
+          <article class="story-card">
+            <span class="story-no"></span>
+            <h3>镜像协议 <span>MIRROR PROTOCOL</span></h3>
+            <p>张开手掌，近一步，Ghost 便后退；退一步，它便向你探来。同时，你的赛博档案与 3D 意识镜像正在后台生成。</p>
+            <div class="story-signal"><span>MOTION → COEXISTENCE</span><i></i><span>03</span></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="experience" data-watermark="TOUCH" aria-label="寻找 Ghost 互动">
+      <div class="slide-inner experience-layout">
+        <div class="reveal">
+          <div class="eyebrow">// ACT 01 // HAPTIC GAMEPLAY</div>
+          <h2>“找到”不在屏幕上，<br><span>而在手上。</span></h2>
+          <p class="lede" style="font-size:18px;margin-top:24px">观众直接成为控制回路的一部分。低阻尼提供可回驱的自由；命中区间 + 0.3 s dwell 排除偶然穿越；阻抗刚度平滑爬升，给出可感知的“找到了”。</p>
+          <div class="quote-block">这不是按下按钮。<br>这是和机器一起完成一次触觉握手。</div>
+          <div class="state-strip">
+            <span class="chip">FREE / KP=0</span><span class="state-arrow">→</span>
+            <span class="chip">LOCKING / RAMP</span><span class="state-arrow">→</span>
+            <span class="chip hot">LOCKED / HOLD</span>
+          </div>
+        </div>
+        <div class="fragment-rack reveal" aria-label="Ghost 碎片示意">
+          <div class="fragment-row locked"><b>J01</b><span class="fragment-track"><i style="--level:100%"></i></span><span class="fragment-state">FRAGMENT FOUND</span></div>
+          <div class="fragment-row locked"><b>J02</b><span class="fragment-track"><i style="--level:100%"></i></span><span class="fragment-state">FRAGMENT FOUND</span></div>
+          <div class="fragment-row"><b>J03</b><span class="fragment-track"><i style="--level:82%"></i></span><span class="fragment-state">SEARCHING 0.08 RAD</span></div>
+          <div class="fragment-row locked"><b>J04</b><span class="fragment-track"><i style="--level:100%"></i></span><span class="fragment-state">FRAGMENT FOUND</span></div>
+          <div class="fragment-row"><b>J05</b><span class="fragment-track"><i style="--level:46%"></i></span><span class="fragment-state">SEARCHING 0.31 RAD</span></div>
+          <div class="fragment-row"><b>J06</b><span class="fragment-track"><i style="--level:67%"></i></span><span class="fragment-state">SEARCHING 0.17 RAD</span></div>
+          <div class="micro" style="margin-top:8px">MATCH TOLERANCE 0.12 RAD // PER-JOINT INDEPENDENT STATE // GRAVITY COMPENSATED</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="live-demo" data-watermark="LIVE" aria-label="实机演示界面">
+      <div class="slide-inner live-layout">
+        <a class="live-screen reveal" href="roadshow-live-ui.png" target="_blank" rel="noreferrer" aria-label="打开完整实机演示界面截图">
+          <img src="roadshow-live-ui.png" alt="Ghost Game 实机演示 Web 界面，包含游戏状态、机械臂姿态、视觉画面和三维数字分身">
+          <span class="live-screen-label">FULL SYSTEM UI // CLICK TO EXPAND</span>
+        </a>
+        <div class="live-copy reveal">
+          <div class="eyebrow">// FIELD SYSTEM // 实机演示界面</div>
+          <h2>所有实时信号，<br><span>汇入同一个 Shell。</span></h2>
+          <p class="lede">这不是预先渲染的视频。关节命中、机械臂姿态、相机画面、TTS 字幕、生成进度、3D 模型与观众档案都由 ROS 2 运行状态实时驱动。</p>
+          <div class="live-status"><span>LIVE ROS 2 DATA</span><span>BILINGUAL NARRATIVE</span><span>3D GLB VIEWER</span><span>OPERATOR CONTROLS</span></div>
+          <div class="live-map">
+            <article class="live-zone"><h3>游戏与控制</h3><p>阶段状态、六枚 Ghost 碎片、启动/中止/归位，以及实时机械臂 3D 姿态汇聚在主控制台。</p></article>
+            <article class="live-zone"><h3>视觉神经</h3><p>人脸与手势检测画面按游戏阶段切换，让观众看见机器此刻如何感知和锁定目标。</p></article>
+            <article class="live-zone"><h3>意识镜像</h3><p>Tripo GLB 作为主视图，FLUX 风格画与 DeepSeek 赛博档案同步组成观众的数字分身。</p></article>
+          </div>
+          <div class="live-flow"><span>SENSOR</span><i></i><span>ROS 2</span><i></i><span>WEB MONITOR</span><i></i><span>AUDIENCE</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="architecture" data-watermark="ROS2" aria-label="系统架构">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// SYSTEM TOPOLOGY</div><h2>从叙事到电机，<br><span>每一层只做一件事。</span></h2></div>
+          <span class="section-index">04 / ARCHITECTURE</span>
+        </div>
+        <div class="architecture reveal">
+          <div class="arch-column">
+            <div class="arch-title">EXPERIENCE LAYER</div>
+            <div class="arch-node primary"><strong>Ghost Web</strong><span class="node-code">BILINGUAL UI / 3D GLB / TTS CAPTION</span></div>
+            <div class="arch-node"><strong>Audience</strong><span class="node-code">TOUCH / FACE / OPEN PALM</span></div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-column">
+            <div class="arch-title">INTELLIGENCE LAYER</div>
+            <div class="arch-node primary"><strong>Ghost Game Orchestrator</strong><span class="node-code">STATE / DWELL / CONTROLLER SWITCH / SAFETY TRANSITION</span></div>
+            <div class="arch-node"><strong>Unified Perception</strong><span class="node-code">YUNET FACE ↔ MEDIAPIPE GESTURE / ONE RGB WORKER</span></div>
+            <div class="arch-node"><strong>Cyber TTS</strong><span class="node-code">PIPER / DOUBAO / CANCELLABLE ACTION</span></div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-column">
+            <div class="arch-title">CONTROL LAYER</div>
+            <div class="arch-node primary"><strong>ROS 2 Control Chain</strong><span class="node-code">JTC / IMPEDANCE / DAMPING / POSITION ADAPTER</span></div>
+            <div class="arch-node"><strong>MIT Output</strong><span class="node-code">Q / V / KP / KD / T_FF</span></div>
+            <div class="arch-node"><strong>Safety Shaping</strong><span class="node-code">LIMIT / RATE / HOLD / BLOCKED GUARD</span></div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-column">
+            <div class="arch-title">PHYSICAL + CLOUD</div>
+            <div class="arch-node"><strong>Rebot Arm RS</strong><span class="node-code">6 DOF / CAN / GRIPPER</span></div>
+            <div class="arch-node"><strong>Orbbec 305</strong><span class="node-code">RGB + ALIGNED DEPTH</span></div>
+            <div class="arch-node cloud"><strong>AI Services</strong><span class="node-code">FLUX / TRIPO AI / DEEPSEEK</span></div>
+          </div>
+          <div class="bus"><span>ROS 2 DATA BUS</span><i></i><span>TOPIC / ACTION / SERVICE / CONTROLLER INTERFACE</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="mit" data-watermark="MIT" aria-label="MIT 控制分层">
+      <div class="slide-inner mit-layout">
+        <div class="reveal">
+          <div class="eyebrow">// CONTROL DEEP DIVE</div>
+          <h2>一个常驻 MIT 输出层，<br><span>多种上层行为。</span></h2>
+          <p class="lede" style="font-size:17px;margin-top:22px">游戏逻辑不在实时环里频繁切换电机模式。它只更改每个关节的平衡位置、刚度和阻尼；C++ 控制器在固定周期内完成重力补偿、边界整形与 MIT 命令下发。</p>
+          <div class="formula">τ = Kp(q<sub>ref</sub> − q) + Kd(v<sub>ref</sub> − q̇) + τ<sub>ff</sub>
+            <small>ONE MOTOR-SIDE TUPLE // POSITION + VELOCITY + GAINS + FEED-FORWARD</small>
+          </div>
+          <div class="mode-buttons" role="group" aria-label="控制路径高亮">
+            <button class="mode-button active" data-mode="all">ALL PATHS</button>
+            <button class="mode-button" data-mode="free">FREE</button>
+            <button class="mode-button" data-mode="locked">LOCKED</button>
+            <button class="mode-button" data-mode="trajectory">TRAJECTORY</button>
+          </div>
+          <div class="safety-tags"><span>0.02 RAD / WRITE STEP</span><span>TORQUE RATE LIMIT</span><span>WARM HANDOVER</span><span>GRAVITY FF</span></div>
+        </div>
+        <div class="control-stack reveal" id="control-stack" data-mode="all">
+          <div class="stack-layer">
+            <div class="stack-label">L3<br>BEHAVIOR</div>
+            <div class="stack-content">
+              <div class="stack-box" data-path="free"><b>FREE</b><small>KP=0 / LOW KD<br>BACKDRIVABLE</small></div>
+              <div class="stack-box" data-path="locked"><b>LOCKED</b><small>Q=GHOST TARGET<br>KP/KD RAMP</small></div>
+              <div class="stack-box" data-path="trajectory"><b>MOTION</b><small>SUCCESS / GESTURE<br>SMOOTH JTC</small></div>
+            </div>
+          </div>
+          <div class="stack-layer">
+            <div class="stack-label">L2<br>UPSTREAM</div>
+            <div class="stack-content">
+              <div class="stack-box" data-path="free"><b>Damping Path</b><small>GRAVITY + KD<br>OPTIONAL CHAIN</small></div>
+              <div class="stack-box" data-path="locked free"><b>Direct Impedance</b><small>PER-JOINT KP/KD<br>60–80 HZ REF</small></div>
+              <div class="stack-box" data-path="trajectory"><b>JTC → Impedance</b><small>DENSE TRAJECTORY<br>ZERO-END MOTION</small></div>
+            </div>
+          </div>
+          <div class="stack-layer output" data-path="free locked trajectory">
+            <div class="stack-label">L1<br>MIT OUTPUT</div>
+            <div class="stack-content">
+              <div class="stack-box"><b>Tuple Owner</b><small>EXCLUSIVE Q/V/KP/KD/TFF</small></div>
+              <div class="stack-box"><b>Continuity</b><small>LATCHED HOLD<br>PRELOAD TRANSFER</small></div>
+              <div class="stack-box"><b>Limits</b><small>STEP / TORQUE<br>FINITE CHECKS</small></div>
+            </div>
+          </div>
+          <div class="stack-layer hardware" data-path="free locked trajectory">
+            <div class="stack-label">L0<br>HARDWARE</div>
+            <div class="stack-content" style="grid-template-columns:1fr 1fr">
+              <div class="stack-box"><b>CAN Interface</b><small>MIT FRAME / MOTOR FEEDBACK</small></div>
+              <div class="stack-box"><b>6 Joint Actuators</b><small>ENCODER / CURRENT / MOTION</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="perception" data-watermark="VISION" aria-label="视觉与手势">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// EMBODIED PERCEPTION</div><h2>相机不只是看见，<br><span>它直接改变运动。</span></h2></div>
+          <span class="section-index">06 / PERCEPTION</span>
+        </div>
+        <div class="perception-grid reveal">
+          <article class="panel">
+            <div class="micro">FACE CHANNEL // YUNET</div>
+            <h3>凝视、稳定、跟随</h3>
+            <p>统一感知节点选择画面中最大可见人脸，扩展为完整头部 crop。bbox 面积过滤远距离观众，空间稳定 + dwell 防止误锁；J5/J4 在边界内连续对准视觉轴。</p>
+            <div class="signal-row"><span>DETECTOR</span><i style="--signal:76%"></i><b>30 HZ</b></div>
+            <div class="signal-row"><span>SERVO</span><i style="--signal:92%"></i><b>60 HZ</b></div>
+            <div class="spec-list"><div class="spec"><b>0.30s</b><small>FACE STABLE DWELL</small></div><div class="spec"><b>0.20s</b><small>STALE FRAME FREEZE</small></div><div class="spec"><b>0.70</b><small>RAD/S WRIST LIMIT</small></div></div>
+          </article>
+          <article class="panel">
+            <div class="micro">PALM CHANNEL // MEDIAPIPE + DEPTH</div>
+            <h3>手掌成为无接触控制器</h3>
+            <p>只选最大张开手掌，并将 RGB 手心与 Orbbec 对齐深度匹配。建立中性距离后，前推使机械臂后退，后撤使它前探；水平位置同时驱动 J5 视线跟随。</p>
+            <div class="signal-row"><span>CONTROL</span><i style="--signal:96%"></i><b>80 HZ</b></div>
+            <div class="signal-row"><span>DEPTH AGE</span><i style="--signal:61%"></i><b>&lt;300 MS</b></div>
+            <div class="spec-list"><div class="spec"><b>±0.08m</b><small>CAMERA AXIS TRAVEL</small></div><div class="spec"><b>1.0</b><small>RAD/S JOINT LIMIT</small></div><div class="spec"><b>FREEZE</b><small>LOST / INVALID DEPTH</small></div></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="ai" data-watermark="TWIN" aria-label="AI 生成链路">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// IDENTITY RECONSTRUCTION PIPELINE</div><h2>一张原始人像，<br><span>分裂成档案与数字分身。</span></h2></div>
+          <span class="section-index">07 / GENERATIVE AI</span>
+        </div>
+        <div class="pipeline reveal">
+          <div class="pipe-node source"><span class="node-code">SOURCE</span><b>Stable Head Crop</b><p>经过面积、稳定性和视觉轴居中验证的原始完整头部图像。</p></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-split">
+            <div class="pipe-node"><span class="node-code">IDENTITY BRANCH</span><b>DeepSeek Vision</b><p>直接读取原始 crop，生成行动代号、角色定位、义体等级与意识摘要。</p></div>
+            <div class="pipe-node"><span class="node-code">VISUAL BRANCH</span><b>FLUX Image Edit</b><p>保留身份几何与原有配饰，仅通过光影、色彩和背景赋予赛博视觉。</p></div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-split">
+            <div class="pipe-node result"><span class="node-code">STRUCTURED JSON</span><b>Cyber Dossier</b><p>经过 schema 验证、字段规则与截断修复，在 Web 中实时解密。</p></div>
+            <div class="pipe-node"><span class="node-code">IMAGE TO 3D</span><b>Tripo AI API</b><p>风格画上传、异步轮询生成任务，返回带 PBR 材质的 GLB 模型。</p></div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-node result"><span class="node-code">SAME-ORIGIN WEB</span><b>Neural Twin Viewer</b><p>GLB 缓存、校验与自动取景；3D 主视图 + FLUX 画中画 + 右侧赛博档案。</p></div>
+        </div>
+        <div class="latency-mask reveal"><b>LATENCY BECOMES GAMEPLAY</b><i></i><span>TRIPO 生成期间，手掌镜像交互持续运行</span></div>
+      </div>
+    </section>
+
+    <section class="slide" id="safety" data-watermark="SAFE" aria-label="人机安全">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// FROM TASK SAFETY TO RELATIONSHIP SAFETY</div><h2>机器人安全，<br><span>不应只围绕“完成任务”。</span></h2></div>
+          <span class="section-index">08 / SAFETY</span>
+        </div>
+        <div class="safety-layout reveal">
+          <article class="safety-column active">
+            <h3><span>ACTIVE SAFETY // 主动安全</span>在接触发生前，理解人和空间</h3>
+            <ul class="check-list">
+              <li>RGB + 对齐深度：手掌距离、时间戳偏差与有效像素检查</li>
+              <li>人脸/手势身份跳变拒绝，丢帧立即冻结运动参考</li>
+              <li>局部跟随边界、关节限位、跟踪误差超限重定基准</li>
+              <li><span class="warning">下一步：</span>将手掌深度门控扩展为全空间深度视觉避障</li>
+            </ul>
+          </article>
+          <article class="safety-column passive">
+            <h3><span>PASSIVE SAFETY // 被动安全</span>在接触已发生时，让机器保持柔软</h3>
+            <ul class="check-list">
+              <li>FREE 状态 Kp=0，低阻尼 + 重力补偿提供可回驱人机接触</li>
+              <li>刚度分步爬升，位置与总前馈力矩限幅，避免力矩阶跃</li>
+              <li>MIT 常驻层在上游断开时锁定等效静止保持，不突然丢失支撑</li>
+              <li>阻塞检测、小步后退与刚度释放，把故障从“硬撑”变成“让步”</li>
+            </ul>
+          </article>
+        </div>
+        <div class="law-grid reveal" aria-label="阿西莫夫机器人三定律工程转译">
+          <article class="law-card"><b>LAW 01 // 不伤害人类</b><p>不伤害，也不因不作为让人受到伤害。</p><small>ENGINEERING: PERCEPTION + FORCE BOUNDARY</small></article>
+          <article class="law-card"><b>LAW 02 // 服从人类</b><p>理解人的意图并响应，但永远受更高安全约束限制。</p><small>ENGINEERING: INTENT + BOUNDED COMPLIANCE</small></article>
+          <article class="law-card"><b>LAW 03 // 保护自身</b><p>在不冲突前两条的前提下保持自身运行与系统可恢复。</p><small>ENGINEERING: LIMITS + HOLD + FALLBACK</small></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="market" data-watermark="NEXT" aria-label="商业前景">
+      <div class="slide-inner">
+        <div class="section-head reveal">
+          <div><div class="eyebrow">// BEYOND THE DEMO</div><h2>从一场互动，<br><span>走向可信任的具身产品。</span></h2></div>
+          <span class="section-index">09 / BUSINESS</span>
+        </div>
+        <div class="market-grid reveal">
+          <article class="market-card"><div class="market-icon">01</div><h3>柔性互动机器人</h3><p>面向科技馆、品牌展陈、教育与创意零售。把柔顺触感、人体感知和故事引导组合成一套可复用交互引擎。</p><div class="market-foot">EXPERIENCE AS A ROBOT CAPABILITY</div></article>
+          <article class="market-card"><div class="market-icon">02</div><h3>桌面陪伴与随动屏</h3><p>以低自由度柔性机构承载屏幕或相机，用凝视、身体方向和手势构建“它正在看你”的存在感。</p><div class="market-foot">GAZE-AWARE DESKTOP EMBODIMENT</div></article>
+          <article class="market-card"><div class="market-icon">03</div><h3>柔顺控制中间件</h3><p>将 MIT 常驻输出、阻抗/阻尼链、无冲击切换和安全整形抽象为 ROS 2 可复用控制栈，服务协作机械臂与互动硬件。</p><div class="market-foot">CONTROL STACK AS INFRASTRUCTURE</div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" id="open-source" data-watermark="OPEN" aria-label="主题与开源">
+      <div class="slide-inner final-grid">
+        <div class="reveal">
+          <div class="eyebrow">// THE MESSAGE INSIDE THE SHELL</div>
+          <p class="manifesto">当机器人走出围栏，<br>
+            它需要的不只是<strong>更强的任务能力</strong>，<br>
+            还要有<span>理解人、避让人、柔和地回应人</span>的能力。</p>
+          <p class="lede" style="font-size:17px">《寻找 Ghost》想表达的是：人机共生不从更高的速度开始，它从一个安全、可理解、可退让的接触开始。</p>
+          <div class="final-note">GHOST IN THE SHELL-INSPIRED, NON-COMMERCIAL HACKATHON NARRATIVE PROTOTYPE.<br>BUILT WITH ROS 2 JAZZY / REBOT ARM RS / ORBBEC 305 / NVIDIA DGX SPARK.</div>
+        </div>
+        <aside class="repo-card reveal">
+          <div class="micro">SOURCE ACCESS // PUBLIC REPOSITORY</div>
+          <h3 style="margin:14px 0 0;font-size:30px">Ghost Game<br>Application Stack</h3>
+          <a class="repo-url" id="repo-url" href="https://github.com/xiayip/ghost_game" target="_blank" rel="noreferrer">github.com/xiayip/ghost_game</a>
+          <div class="repo-actions">
+            <a class="repo-button" href="https://github.com/xiayip/ghost_game" target="_blank" rel="noreferrer">OPEN REPOSITORY ↗</a>
+            <button class="repo-button" id="copy-repo">COPY URL</button>
+          </div>
+          <div class="open-list"><span>ORCHESTRATOR</span><span>PERCEPTION</span><span>CYBER TTS</span><span>FLUX BRIDGE</span><span>TRIPO / GLB</span><span>DEEPSEEK DOSSIER</span><span>WEB MONITOR</span><span>ROS INTERFACES</span></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div class="presenter-hint">SCROLL / ↑ ↓ / SPACE // PRESS F FOR FULLSCREEN</div>
+
+  <script>
+    (() => {
+      const slides = [...document.querySelectorAll('.slide')];
+      const rail = document.getElementById('rail');
+      const current = document.getElementById('current-slide');
+      const total = document.getElementById('total-slides');
+      const progress = document.getElementById('deck-progress');
+      let activeIndex = 0;
+
+      total.textContent = String(slides.length).padStart(2, '0');
+      slides.forEach((slide, index) => {
+        const link = document.createElement('a');
+        link.href = `#${slide.id}`;
+        link.setAttribute('aria-label', `跳转到第 ${index + 1} 页`);
+        rail.appendChild(link);
+      });
+      const railLinks = [...rail.children];
+
+      const activate = (index) => {
+        activeIndex = Math.max(0, Math.min(slides.length - 1, index));
+        slides.forEach((slide, i) => slide.classList.toggle('in-view', i === activeIndex));
+        railLinks.forEach((link, i) => link.classList.toggle('active', i === activeIndex));
+        current.textContent = String(activeIndex + 1).padStart(2, '0');
+        progress.style.width = `${((activeIndex + 1) / slides.length) * 100}%`;
+        history.replaceState(null, '', `#${slides[activeIndex].id}`);
+      };
+      const go = (index) => slides[Math.max(0, Math.min(slides.length - 1, index))]
+        .scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries.filter(entry => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible) activate(slides.indexOf(visible.target));
+      }, { threshold: [0.35, 0.55, 0.75] });
+      slides.forEach(slide => observer.observe(slide));
+      activate(Math.max(0, slides.findIndex(slide => `#${slide.id}` === location.hash)));
+
+      document.getElementById('prev-slide').addEventListener('click', () => go(activeIndex - 1));
+      document.getElementById('next-slide').addEventListener('click', () => go(activeIndex + 1));
+      document.getElementById('fullscreen').addEventListener('click', async () => {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+        else await document.exitFullscreen?.();
+      });
+      document.addEventListener('keydown', event => {
+        const tag = event.target?.tagName?.toLowerCase();
+        if (tag === 'button' || tag === 'a') return;
+        if (['ArrowDown', 'ArrowRight', 'PageDown', ' '].includes(event.key)) {
+          event.preventDefault(); go(activeIndex + 1);
+        } else if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(event.key)) {
+          event.preventDefault(); go(activeIndex - 1);
+        } else if (event.key.toLowerCase() === 'f') {
+          document.getElementById('fullscreen').click();
+        } else if (event.key === 'Home') go(0);
+        else if (event.key === 'End') go(slides.length - 1);
+      });
+
+      const stack = document.getElementById('control-stack');
+      document.querySelectorAll('.mode-button').forEach(button => {
+        button.addEventListener('click', () => {
+          document.querySelectorAll('.mode-button').forEach(item => item.classList.remove('active'));
+          button.classList.add('active');
+          stack.dataset.mode = button.dataset.mode;
+        });
+      });
+
+      document.getElementById('copy-repo').addEventListener('click', async event => {
+        const button = event.currentTarget;
+        try {
+          await navigator.clipboard.writeText('https://github.com/xiayip/ghost_game');
+          button.textContent = 'COPIED';
+          setTimeout(() => { button.textContent = 'COPY URL'; }, 1600);
+        } catch (_) {
+          location.href = 'https://github.com/xiayip/ghost_game';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
