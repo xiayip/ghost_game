@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1190" viewBox="0 0 1600 1190" role="img" aria-labelledby="title description">
+  <title id="title">Ghost Game system architecture and data flow</title>
+  <desc id="description">Inputs from the audience, Orbbec camera and operator flow through unified perception, the Ghost Game orchestrator, the MIT control stack and the asynchronous AI reconstruction pipeline. Outputs include robot motion, speech, the live dashboard, a GLB neural twin and a cyber dossier.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#061017"/>
+      <stop offset="0.55" stop-color="#081219"/>
+      <stop offset="1" stop-color="#05090d"/>
+    </linearGradient>
+    <linearGradient id="cyanFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c2731"/>
+      <stop offset="1" stop-color="#09151c"/>
+    </linearGradient>
+    <linearGradient id="greenFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b2a24"/>
+      <stop offset="1" stop-color="#09151a"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#66e7ff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L10 5L0 10Z" fill="#5ce7ff"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L10 5L0 10Z" fill="#2df2aa"/>
+    </marker>
+    <style>
+      .label { font: 700 17px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #e8f4f7; }
+      .sub { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #7f96a0; letter-spacing: .04em; }
+      .micro { font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #5ce7ff; letter-spacing: .12em; }
+      .detail { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #a7bac1; }
+      .flow-label { font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #9fcbd3; letter-spacing: .025em; }
+      .node { fill: #09151c; stroke: #21404a; stroke-width: 1.5; }
+      .node-cyan { fill: url(#cyanFill); stroke: #35cde8; stroke-width: 1.7; }
+      .node-green { fill: url(#greenFill); stroke: #25d99a; stroke-width: 1.7; }
+      .node-cloud { fill: #10131b; stroke: #a06cff; stroke-width: 1.5; stroke-dasharray: 7 5; }
+      .flow { fill: none; stroke: #54cfe5; stroke-width: 2; marker-end: url(#arrowCyan); }
+      .flow-green { fill: none; stroke: #2bd89c; stroke-width: 2; marker-end: url(#arrowGreen); }
+      .flow-dim { fill: none; stroke: #526b74; stroke-width: 1.5; stroke-dasharray: 6 6; marker-end: url(#arrowCyan); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1190" rx="24" fill="url(#background)"/>
+  <rect width="1600" height="1190" rx="24" fill="url(#grid)"/>
+  <path d="M0 106H1600" stroke="#17313a"/>
+  <rect x="40" y="31" width="9" height="42" fill="#5ce7ff" filter="url(#glow)"/>
+  <text id="diagram-title" x="70" y="55" font-family="system-ui, sans-serif" font-size="28" font-weight="750" fill="#eef8fa">Ghost Game // 系统架构与数据流</text>
+  <text x="70" y="80" class="sub">INPUT → PERCEPTION / ORCHESTRATION → CONTROL + GENERATIVE AI → PHYSICAL &amp; DIGITAL OUTPUT</text>
+  <g transform="translate(1320 35)">
+    <circle cx="8" cy="9" r="4" fill="#2df2aa" filter="url(#glow)"/>
+    <text x="22" y="13" class="micro" fill="#2df2aa">ROS 2 JAZZY // LIVE</text>
+  </g>
+
+  <!-- data flow lines are placed behind the nodes -->
+  <g id="data-flows">
+    <path class="flow" d="M330 242H350V438H400"/>
+    <path class="flow" d="M330 427H365V265H400"/>
+    <path class="flow" d="M330 612H380V510H400"/>
+    <path class="flow" d="M650 330V385"/>
+    <path class="flow-green" d="M650 575V662"/>
+    <path class="flow-green" d="M900 744H1250"/>
+    <path class="flow" d="M900 455H1060V222H1250"/>
+    <path class="flow" d="M900 480H1120V402H1250"/>
+    <path class="flow-dim" d="M1250 820H1165V540H900"/>
+    <path class="flow" d="M820 310V895H430V922"/>
+    <path class="flow-dim" d="M900 505H945V1045H430V1006"/>
+    <path class="flow" d="M560 964H620"/>
+    <path class="flow" d="M560 984H590V1034H620"/>
+    <path class="flow" d="M800 944H850"/>
+    <path class="flow" d="M800 1034H1155V640H1250"/>
+    <path class="flow" d="M1040 944H1180V615H1250"/>
+  </g>
+
+  <!-- flow labels -->
+  <g>
+    <rect x="525" y="345" width="251" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="537" y="361" class="flow-label">DETECTION / PALM CONTROL</text>
+    <rect x="551" y="607" width="197" height="24" rx="4" fill="#071016" stroke="#1f4d40"/>
+    <text x="563" y="623" class="flow-label">Q_DES / KP / KD / T_FF</text>
+    <rect x="985" y="721" width="188" height="24" rx="4" fill="#071016" stroke="#1f4d40"/>
+    <text x="997" y="737" class="flow-label">MIT COMMAND @ CONTROL RATE</text>
+    <rect x="985" y="510" width="132" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="997" y="526" class="flow-label">/JOINT_STATES</text>
+    <rect x="935" y="193" width="198" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="947" y="209" class="flow-label">/GHOST/TTS/SPEAK</text>
+    <rect x="957" y="373" width="194" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="969" y="389" class="flow-label">STATE / STATUS / CAPTION</text>
+    <rect x="744" y="855" width="180" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="756" y="871" class="flow-label">FULL-HEAD CROP</text>
+    <rect x="839" y="1017" width="220" height="24" rx="4" fill="#071016" stroke="#24404a"/>
+    <text x="851" y="1033" class="flow-label">ONE-SHOT PROFILE PROMPT</text>
+  </g>
+
+  <!-- input column -->
+  <g id="inputs">
+    <text x="55" y="145" class="micro">01 // INPUTS</text>
+    <rect x="50" y="175" width="280" height="135" rx="10" class="node"/>
+    <text x="72" y="205" class="micro">HUMAN // TOUCH</text>
+    <text x="72" y="236" class="label">观众直接掰动机械臂</text>
+    <text x="72" y="263" class="detail">六关节位置与速度成为游戏输入</text>
+    <text x="72" y="287" class="sub">FREE → LOCKING → LOCKED</text>
+
+    <rect x="50" y="350" width="280" height="155" rx="10" class="node"/>
+    <text x="72" y="380" class="micro">ORBBEC 305 // OPTICAL NERVE</text>
+    <text x="72" y="411" class="label">RGB + 对齐深度</text>
+    <text x="72" y="438" class="detail">人脸、完整头部 crop、最大张开手掌</text>
+    <text x="72" y="462" class="sub">/camera/color/...  /camera/depth/...</text>
+    <text x="72" y="482" class="sub">30 Hz detector input</text>
+
+    <rect x="50" y="545" width="280" height="135" rx="10" class="node"/>
+    <text x="72" y="575" class="micro">OPERATOR // WEB CONSOLE</text>
+    <text x="72" y="606" class="label">开始 / 中止 / 归位 / Mock</text>
+    <text x="72" y="633" class="detail">现场操作者通过受控 Service 入口干预</text>
+    <text x="72" y="657" class="sub">Trigger services via /api/control/*</text>
+
+    <rect x="50" y="720" width="280" height="118" rx="10" fill="#071017" stroke="#35515a" stroke-dasharray="6 5"/>
+    <text x="72" y="752" class="micro">EXTERNAL SERVICES</text>
+    <text x="72" y="783" class="label">FLUX / Tripo / DeepSeek</text>
+    <text x="72" y="810" class="detail">异步 HTTP API，不阻塞机械臂控制</text>
+  </g>
+
+  <!-- ROS runtime -->
+  <g id="runtime">
+    <text x="405" y="145" class="micro">02 // ROS 2 RUNTIME</text>
+    <rect x="400" y="160" width="500" height="170" rx="12" class="node-cyan"/>
+    <text x="428" y="195" class="micro">GHOST_GAME_PERCEPTION</text>
+    <text x="428" y="228" class="label">统一感知节点 // OFF ↔ FACE ↔ GESTURE</text>
+    <text x="428" y="257" class="detail">YuNet 人脸检测 · MediaPipe 手势 · 深度对齐 · 最大目标选择</text>
+    <text x="428" y="284" class="sub">OUT: /nearest_face/detection · /nearest_face/head_crop</text>
+    <text x="428" y="305" class="sub">OUT: /gestures/palm_control · debug image streams</text>
+
+    <rect x="400" y="385" width="500" height="190" rx="12" class="node-cyan"/>
+    <text x="428" y="420" class="micro">GHOST_GAME_ORCHESTRATOR</text>
+    <text x="428" y="454" class="label">叙事状态机与安全决策中心</text>
+    <text x="428" y="483" class="detail">秘密姿态 · 命中区间 · dwell · 人脸搜索 · 手掌随动 · 故障回退</text>
+    <text x="428" y="511" class="sub">IN: joint feedback / detections / service requests</text>
+    <text x="428" y="532" class="sub">OUT: controller refs / perception mode / prompts / Speak goals</text>
+    <rect x="741" y="539" width="130" height="22" rx="11" fill="#08241e" stroke="#2df2aa"/>
+    <text x="758" y="554" class="micro" fill="#2df2aa">NON-BLOCKING</text>
+
+    <rect x="400" y="662" width="500" height="164" rx="12" class="node-green"/>
+    <text x="428" y="697" class="micro" fill="#2df2aa">ROS2_CONTROL // REAL-TIME PATH</text>
+    <text x="428" y="730" class="label">MIT 阻抗控制 + JTC 轨迹链</text>
+    <text x="428" y="759" class="detail">每关节 q_des / kp / kd / tau_ff；重力补偿、限幅与平滑切换</text>
+    <text x="428" y="786" class="sub">FREE: Kp=0 · LOCKED: ramped stiffness · MOTION: dense JTC</text>
+    <text x="428" y="807" class="sub">Safety: step / torque / joint / tracking-error guards</text>
+  </g>
+
+  <!-- outputs -->
+  <g id="outputs">
+    <text x="1255" y="145" class="micro">03 // OUTPUTS</text>
+    <rect x="1250" y="160" width="310" height="125" rx="10" class="node"/>
+    <text x="1274" y="191" class="micro">GHOST_TTS</text>
+    <text x="1274" y="222" class="label">赛博语音与字幕</text>
+    <text x="1274" y="249" class="detail">Piper / Doubao · 可打断 Action</text>
+    <text x="1274" y="270" class="sub">Speaker + /ghost/tts/caption</text>
+
+    <rect x="1250" y="330" width="310" height="155" rx="10" class="node"/>
+    <text x="1274" y="361" class="micro">WEB MONITOR // :8765</text>
+    <text x="1274" y="392" class="label">实机叙事控制台</text>
+    <text x="1274" y="419" class="detail">阶段、碎片、相机、机械臂姿态与生成进度</text>
+    <text x="1274" y="446" class="sub">/api/state · /api/camera.jpg</text>
+    <text x="1274" y="467" class="sub">same-origin mesh / image / profile bridge</text>
+
+    <rect x="1250" y="540" width="310" height="155" rx="10" class="node-cloud"/>
+    <text x="1274" y="571" class="micro" fill="#b594ff">GENERATIVE OUTPUT</text>
+    <text x="1274" y="602" class="label">3D 意识镜像 + 赛博档案</text>
+    <text x="1274" y="629" class="detail">PBR GLB 主视图、FLUX 画中画、DeepSeek 档案</text>
+    <text x="1274" y="656" class="sub">/ghost/reconstruction/model_url</text>
+    <text x="1274" y="677" class="sub">/ghost/profile/card</text>
+
+    <rect x="1250" y="735" width="310" height="170" rx="10" class="node-green"/>
+    <text x="1274" y="766" class="micro" fill="#2df2aa">PHYSICAL OUTPUT</text>
+    <text x="1274" y="797" class="label">ReBot Arm RS + Gripper</text>
+    <text x="1274" y="824" class="detail">柔顺触觉反馈、凝视动作、手掌推拉跟随</text>
+    <text x="1274" y="851" class="sub">6-DOF CAN actuators · end-effector camera</text>
+    <text x="1274" y="873" class="sub">feedback closes the joint-state loop</text>
+  </g>
+
+  <!-- asynchronous generation pipeline -->
+  <g id="generation">
+    <rect x="370" y="875" width="820" height="210" rx="16" fill="#080d13" stroke="#553d76" stroke-width="1.5"/>
+    <text x="395" y="904" class="micro" fill="#b594ff">04 // ASYNCHRONOUS IDENTITY PIPELINE</text>
+
+    <rect x="400" y="922" width="160" height="84" rx="8" class="node"/>
+    <text x="420" y="951" class="micro">SOURCE</text>
+    <text x="420" y="978" class="label" font-size="15">稳定头部 Crop</text>
+    <text x="420" y="997" class="sub">original identity</text>
+
+    <rect x="620" y="902" width="180" height="84" rx="8" class="node-cloud"/>
+    <text x="640" y="931" class="micro" fill="#b594ff">FLUX</text>
+    <text x="640" y="958" class="label" font-size="15">赛博风格编辑</text>
+    <text x="640" y="977" class="sub">image_png</text>
+
+    <rect x="850" y="902" width="190" height="84" rx="8" class="node-cloud"/>
+    <text x="870" y="931" class="micro" fill="#b594ff">IMG2MESH + TRIPO</text>
+    <text x="870" y="958" class="label" font-size="15">PBR GLB 生成</text>
+    <text x="870" y="977" class="sub">async progress + URL</text>
+
+    <rect x="620" y="1002" width="180" height="66" rx="8" class="node-cloud"/>
+    <text x="640" y="1029" class="micro" fill="#b594ff">IMG2DOC + DEEPSEEK</text>
+    <text x="640" y="1053" class="label" font-size="15">结构化赛博档案</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(50 1140)">
+    <line x1="0" y1="0" x2="42" y2="0" class="flow"/>
+    <text x="55" y="4" class="sub">ROS topic / action / service</text>
+    <line x1="260" y1="0" x2="302" y2="0" class="flow-green"/>
+    <text x="315" y="4" class="sub">real-time control path</text>
+    <line x1="510" y1="0" x2="552" y2="0" class="flow-dim"/>
+    <text x="565" y="4" class="sub">feedback / asynchronous trigger</text>
+  </g>
+  <text x="1550" y="1165" text-anchor="end" class="micro">GHOST GAME // HUMAN–ROBOT SYMBIOSIS PROTOCOL</text>
+</svg>

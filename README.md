@@ -1,5 +1,48 @@
 # Ghost Game
 
+**Ghost Game（寻找 Ghost）** 是一个叙事驱动的人机共生互动装置。观众先通过
+直接掰动机械臂寻找六枚“意识碎片”，随后机器苏醒并用末端相机寻找、观察来访者，
+最终通过手掌距离完成无接触随动交互，同时生成观众的赛博档案与三维数字分身。
+
+它把低阻尼拖动、MIT 阻抗控制、人脸与手势感知、深度视觉、语音、图像生成和
+图生 3D 串成一条完整体验链。项目重点不只是让机器人完成任务，也包括接触过程中的
+可回驱性、速度与力矩边界、感知失效冻结，以及对人的主动避让与被动柔顺。
+
+## Demo dashboard
+
+<p align="center">
+  <a href="ghost_game_orchestrator/web/roadshow-live-ui.png">
+    <img src="ghost_game_orchestrator/web/roadshow-live-ui.png" width="760" alt="Ghost Game 实机演示界面，包含游戏阶段、Ghost 碎片、机械臂姿态、视觉画面、三维数字分身和观众赛博档案">
+  </a>
+</p>
+
+<p align="center"><em>实机 Web 控制台：游戏状态、TTS 字幕、机械臂姿态、视觉神经、生成进度、3D 模型与观众档案由 ROS 2 实时数据驱动。点击查看原图。</em></p>
+
+## Architecture and data flow
+
+<p align="center">
+  <a href="docs/assets/ghost-game-architecture.svg">
+    <img src="docs/assets/ghost-game-architecture.svg" width="1100" alt="Ghost Game 输入、ROS 2 运行时、控制链、生成式 AI 管线与输出架构图">
+  </a>
+</p>
+
+The diagram separates the latency-sensitive robot path from asynchronous AI
+work:
+
+1. **Interaction inputs** come from direct joint motion, Orbbec RGB/depth, and
+   operator service calls.
+2. **Perception** switches one RGB worker between `OFF`, `FACE`, and `GESTURE`,
+   publishing face, full-head crop, open-palm, depth, and debug streams.
+3. **Orchestration** owns the story state, dwell decisions, safety transitions,
+   perception mode, TTS goals, reconstruction triggers, and controller targets.
+4. **Real-time output** flows through the MIT impedance/JTC control chain to the
+   six-joint arm; `/joint_states` closes the feedback loop.
+5. **Asynchronous output** branches the stable original crop to DeepSeek for the
+   cyber dossier and to FLUX → `img2mesh` → Tripo for the PBR GLB. The Web bridge
+   combines both results with live robot, camera, progress, and caption data.
+
+## Packages
+
 This repository is split into eight ROS 2 packages with one-way ownership:
 
 | Package | Responsibility |
@@ -18,6 +61,8 @@ ghost_game_perception, ghost_tts, flux_image_editor, img2mesh, img2doc,
 ghost_game_interfaces}`. Face and hand inference now live entirely inside
 `ghost_game_perception`; the orchestrator, Web, reconstruction, TTS, and
 action router remain connected through ROS interfaces.
+
+## Experience flow
 
 "Find the Ghost" arm interaction demo. The arm silently picks 6 secret joint
 angles, goes compliant (damping-like), and the audience hand-guesses each
